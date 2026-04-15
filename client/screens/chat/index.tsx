@@ -22,12 +22,12 @@ const INTERPRETER_CONFIG: Record<string, { name: string; color: string; avatar: 
   freud: {
     name: '弗洛伊德',
     color: '#A78BFA',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=200&fit=crop&crop=face',
+    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832',
   },
   zhougong: {
     name: '周公',
     color: '#67E8F9',
-    avatar: 'https://images.unsplash.com/photo-1577401239170-897c2f45dfd0?w=200&h=200&fit=crop&crop=face',
+    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4ad23d7a-5e1a-4f68-9530-16bf23fb6942.jpeg?sign=1807775797-faad9d4411-0-eab185f513ae76adac286fdce9d24e8c3773bc504796ef69ecc9ecb8c12cd1d6',
   },
 };
 
@@ -36,6 +36,102 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;
+}
+
+/**
+ * 统一的 SSE 连接函数，兼容 Web 和 Native
+ * Web 端使用 fetch + ReadableStream（XHR POST 不支持增量读取）
+ * Native 端使用 react-native-sse
+ */
+function connectSSE(
+  url: string,
+  body: object,
+  onMessage: (data: string) => void,
+  onDone: () => void,
+  onError: (err: any) => void
+): { close: () => void } {
+  if (Platform.OS === 'web') {
+    // Web 端：使用 fetch + ReadableStream 处理 SSE
+    const controller = new AbortController();
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          onError(new Error(`HTTP ${response.status}`));
+          return;
+        }
+        const reader = (response as any).body?.getReader();
+        if (!reader) {
+          // Fallback: 如果 ReadableStream 不可用，读取完整响应
+          const text = await response.text();
+          const lines = text.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') {
+                onDone();
+                return;
+              }
+              onMessage(data);
+            }
+          }
+          onDone();
+          return;
+        }
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') {
+                onDone();
+                return;
+              }
+              onMessage(data);
+            }
+          }
+        }
+        onDone();
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') onError(err);
+      });
+
+    return { close: () => controller.abort() };
+  }
+
+  // Native 端：使用 react-native-sse
+  const sse = new RNSSE(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  sse.addEventListener('message', (event: any) => {
+    if (!event.data || event.data === '[DONE]') {
+      onDone();
+      sse.close();
+      return;
+    }
+    onMessage(event.data);
+  });
+
+  sse.addEventListener('error', (err: any) => {
+    onError(err);
+    sse.close();
+  });
+
+  return { close: () => sse.close() };
 }
 
 export default function ChatScreen() {
@@ -50,8 +146,113 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
-  const sseRef = useRef<RNSSE | null>(null);
+  const sseCloseRef = useRef<(() => void) | null>(null);
+
+  // Helper: handle SSE data
+  const handleSSEData = useCallback((assistantMsgId: string, rawData: string) => {
+    try {
+      const parsed = JSON.parse(rawData);
+      if (parsed.content) {
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === assistantMsgId ? { ...m, content: m.content + parsed.content } : m
+          )
+        );
+      }
+      if (parsed.error) {
+        setError(parsed.error);
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, []);
+
+  // Start interpretation via SSE
+  const startInterpretation = useCallback(
+    (dId: number, interp: string) => {
+      setIsStreaming(true);
+      setError(null);
+      const assistantMsgId = `stream-${Date.now()}`;
+      setMessages(prev => [
+        ...prev,
+        { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
+      ]);
+
+      const url = `${BASE_URL}/api/v1/dreams/${dId}/interpret`;
+
+      const conn = connectSSE(
+        url,
+        { interpreter: interp },
+        (data) => {
+          handleSSEData(assistantMsgId, data);
+        },
+        () => {
+          setIsStreaming(false);
+          setMessages(prev =>
+            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+          );
+          sseCloseRef.current = null;
+        },
+        (err) => {
+          setIsStreaming(false);
+          setError('连接解梦师失败，请重试');
+          setMessages(prev =>
+            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+          );
+          sseCloseRef.current = null;
+        }
+      );
+      sseCloseRef.current = conn.close;
+    },
+    [handleSSEData]
+  );
+
+  // Send follow-up message via SSE
+  const sendMessage = useCallback(() => {
+    if (!inputText.trim() || !dreamId || isStreaming) return;
+
+    const msg = inputText.trim();
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: msg,
+    };
+    setMessages(prev => [...prev, userMsg]);
+    setInputText('');
+    setIsStreaming(true);
+    setError(null);
+
+    const assistantMsgId = `stream-${Date.now()}`;
+    setMessages(prev => [
+      ...prev,
+      { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
+    ]);
+
+    const url = `${BASE_URL}/api/v1/dreams/${dreamId}/chat`;
+    const conn = connectSSE(
+      url,
+      { message: msg, interpreter: interpreterStr },
+      (data) => handleSSEData(assistantMsgId, data),
+      () => {
+        setIsStreaming(false);
+        setMessages(prev =>
+          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+        );
+        sseCloseRef.current = null;
+      },
+      (err) => {
+        setIsStreaming(false);
+        setError('发送消息失败，请重试');
+        setMessages(prev =>
+          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+        );
+        sseCloseRef.current = null;
+      }
+    );
+    sseCloseRef.current = conn.close;
+  }, [inputText, dreamId, interpreterStr, isStreaming, handleSSEData]);
 
   // Load dream and messages
   useEffect(() => {
@@ -75,8 +276,8 @@ export default function ChatScreen() {
         } else {
           setMessages(chatMsgs);
         }
-      } catch (e) {
-        console.error('Failed to load dream data:', e);
+      } catch {
+        setError('加载梦境数据失败');
       } finally {
         setInitialLoading(false);
       }
@@ -86,121 +287,12 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dreamId]);
 
-  // Helper: handle SSE message event
-  const handleSSEMessage = useCallback(
-    (eventData: string | null, assistantMsgId: string) => {
-      if (!eventData || eventData === '[DONE]') {
-        if (sseRef.current) {
-          sseRef.current.close();
-          sseRef.current = null;
-        }
-        setIsStreaming(false);
-        setMessages(prev =>
-          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-        );
-        return;
-      }
-
-      try {
-        const parsed = JSON.parse(eventData);
-        if (parsed.content) {
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === assistantMsgId ? { ...m, content: m.content + parsed.content } : m
-            )
-          );
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    },
-    []
-  );
-
-  const handleSSEError = useCallback((assistantMsgId: string) => {
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
-    }
-    setIsStreaming(false);
-    setMessages(prev =>
-      prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-    );
-  }, []);
-
-  // Start interpretation via SSE
-  const startInterpretation = useCallback(
-    (dId: number, interp: string) => {
-      setIsStreaming(true);
-      const assistantMsgId = `stream-${Date.now()}`;
-      setMessages(prev => [
-        ...prev,
-        { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
-      ]);
-
-      const url = `${BASE_URL}/api/v1/dreams/${dId}/interpret`;
-      const sse = new RNSSE(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interpreter: interp }),
-      });
-
-      sseRef.current = sse;
-
-      sse.addEventListener('message', (event) => {
-        handleSSEMessage(event.data, assistantMsgId);
-      });
-
-      sse.addEventListener('error', () => {
-        handleSSEError(assistantMsgId);
-      });
-    },
-    [handleSSEMessage, handleSSEError]
-  );
-
-  // Send follow-up message via SSE
-  const sendMessage = useCallback(() => {
-    if (!inputText.trim() || !dreamId || isStreaming) return;
-
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: inputText.trim(),
-    };
-    setMessages(prev => [...prev, userMsg]);
-    setInputText('');
-
-    setIsStreaming(true);
-    const assistantMsgId = `stream-${Date.now()}`;
-    setMessages(prev => [
-      ...prev,
-      { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
-    ]);
-
-    const url = `${BASE_URL}/api/v1/dreams/${dreamId}/chat`;
-    const sse = new RNSSE(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userMsg.content, interpreter: interpreterStr }),
-    });
-
-    sseRef.current = sse;
-
-    sse.addEventListener('message', (event) => {
-      handleSSEMessage(event.data, assistantMsgId);
-    });
-
-    sse.addEventListener('error', () => {
-      handleSSEError(assistantMsgId);
-    });
-  }, [inputText, dreamId, interpreterStr, isStreaming, handleSSEMessage, handleSSEError]);
-
   // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
+      if (sseCloseRef.current) {
+        sseCloseRef.current();
+        sseCloseRef.current = null;
       }
     };
   }, []);
@@ -246,22 +338,25 @@ export default function ChatScreen() {
               }}
             >
               {item.streaming && !item.content ? (
-                <View className="flex-row gap-1 py-2">
+                <View className="flex-row gap-1 py-2 items-center">
                   <View
-                    className="w-2 h-2 rounded-full animate-pulse"
+                    className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: config.color }}
                   />
                   <View
-                    className="w-2 h-2 rounded-full animate-pulse"
+                    className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: config.color }}
                   />
                   <View
-                    className="w-2 h-2 rounded-full animate-pulse"
+                    className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: config.color }}
                   />
+                  <Text className="text-muted text-xs ml-2">正在思考...</Text>
                 </View>
               ) : (
-                <Text className="text-foreground text-sm leading-6">{item.content}</Text>
+                <Text className="text-foreground text-sm leading-6" selectable>
+                  {item.content}
+                </Text>
               )}
             </View>
           </View>
@@ -276,6 +371,7 @@ export default function ChatScreen() {
       <Screen>
         <View className="flex-1 justify-center items-center">
           <ActivityIndicator size="large" color="#A78BFA" />
+          <Text className="text-muted text-sm mt-3">正在加载梦境...</Text>
         </View>
       </Screen>
     );
@@ -299,10 +395,19 @@ export default function ChatScreen() {
           />
           <View>
             <Text className="text-foreground text-base font-semibold">{config.name}</Text>
-            <Text className="text-muted text-xs">正在为你解梦...</Text>
+            <Text className="text-muted text-xs">
+              {isStreaming ? '正在解梦...' : '解梦师'}
+            </Text>
           </View>
         </View>
       </View>
+
+      {/* Error banner */}
+      {error && (
+        <View className="mx-5 mb-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30">
+          <Text className="text-red-400 text-sm">{error}</Text>
+        </View>
+      )}
 
       {/* Messages */}
       <KeyboardAvoidingView
@@ -316,6 +421,12 @@ export default function ChatScreen() {
           renderItem={renderMessage}
           contentContainerStyle={{ padding: 20, paddingBottom: 10 }}
           showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View className="items-center py-10">
+              <ActivityIndicator size="small" color="#A78BFA" />
+              <Text className="text-muted text-sm mt-3">正在连接解梦师...</Text>
+            </View>
+          }
         />
 
         {/* Input bar */}
