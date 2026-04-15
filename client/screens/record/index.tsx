@@ -1,115 +1,101 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
-  Platform,
+  ScrollView,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
-import { createDream, uploadAudio, transcribeAudio } from '@/utils/api';
-import { Audio } from 'expo-av';
+import { createDream } from '@/utils/api';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { Toast, useToast } from '@/components/Toast';
 
-type RecordingState = 'idle' | 'recording' | 'uploading' | 'transcribing';
+const PRESET_TAGS = ['灵感来源', '印象深刻', '有待深度解读'];
+
+const MOOD_OPTIONS = [
+  { value: 'good', label: '好梦', icon: 'moon', color: '#A78BFA' },
+  { value: 'bad', label: '噩梦', icon: 'ghost', color: '#EF4444' },
+  { value: 'neutral', label: '中性', icon: 'cloud', color: '#6B7280' },
+] as const;
 
 export default function RecordScreen() {
   const router = useSafeRouter();
   const [content, setContent] = useState('');
-  const [recordingState, setRecordingState] = useState<RecordingState>('idle');
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [mood, setMood] = useState<string>('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [customTagInput, setCustomTagInput] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const startRecording = useCallback(async () => {
-    try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('权限提示', '需要麦克风权限才能录制梦境');
-        return;
-      }
+  const { toast, showToast, dismissToast } = useToast();
+  const {
+    isRecording,
+    isProcessing,
+    recordingDuration,
+    startRecording,
+    stopRecording,
+  } = useVoiceInput();
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      recordingRef.current = recording;
-      setRecordingState('recording');
-      setRecordingDuration(0);
-
-      durationTimerRef.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-    } catch (err) {
-      console.error('Failed to start recording:', err);
-      Alert.alert('录音失败', '无法启动录音，请重试');
-    }
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags(prev =>
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    );
   }, []);
 
-  const stopRecording = useCallback(async () => {
-    try {
-      if (durationTimerRef.current) {
-        clearInterval(durationTimerRef.current);
-        durationTimerRef.current = null;
-      }
-
-      if (!recordingRef.current) return;
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
-
-      if (!uri) {
-        Alert.alert('录音失败', '录音文件获取失败');
-        setRecordingState('idle');
-        return;
-      }
-
-      setRecordingState('uploading');
-
-      // Upload audio
-      const uploadResult = await uploadAudio(uri, 'audio/m4a');
-
-      setRecordingState('transcribing');
-
-      // Transcribe audio
-      const asrResult = await transcribeAudio(uploadResult.key);
-
-      if (asrResult.text) {
-        setContent(prev => (prev ? prev + '\n' + asrResult.text : asrResult.text));
-      }
-
-      setRecordingState('idle');
-      setRecordingDuration(0);
-    } catch (err) {
-      console.error('Failed to process recording:', err);
-      Alert.alert('处理失败', '语音转文字失败，请手动输入');
-      setRecordingState('idle');
-      setRecordingDuration(0);
+  const addCustomTag = useCallback(() => {
+    const tag = customTagInput.trim();
+    if (!tag) return;
+    if (selectedTags.includes(tag)) {
+      showToast('标签已存在', 'info');
+      return;
     }
-  }, []);
+    if (selectedTags.length >= 5) {
+      showToast('最多添加5个标签', 'info');
+      return;
+    }
+    setSelectedTags(prev => [...prev, tag]);
+    setCustomTagInput('');
+  }, [customTagInput, selectedTags, showToast]);
+
+  const handleVoiceRecord = useCallback(async () => {
+    if (isRecording) {
+      const result = await stopRecording();
+      if (result.success && result.text) {
+        setContent(prev => (prev ? prev + '\n' + result.text : result.text));
+      } else if (result.error) {
+        showToast(result.error, 'error');
+      }
+    } else {
+      const result = await startRecording();
+      if (!result.success && result.error) {
+        showToast(result.error, 'error');
+      }
+    }
+  }, [isRecording, startRecording, stopRecording, showToast]);
 
   const handleSave = useCallback(async () => {
     if (!content.trim()) {
-      Alert.alert('提示', '请先输入或录制梦境内容');
+      showToast('请先输入或录制梦境内容', 'error');
       return;
     }
 
+    setSaving(true);
     try {
-      const dream = await createDream({ content: content.trim() });
+      const dream = await createDream({
+        content: content.trim(),
+        mood: mood || undefined,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+      });
       router.push('/interpreter-select', { dreamId: dream.id });
-    } catch (err) {
-      console.error('Failed to save dream:', err);
-      Alert.alert('保存失败', '梦境记录保存失败，请重试');
+    } catch (err: any) {
+      showToast(err.message || '保存失败，请重试', 'error');
+    } finally {
+      setSaving(false);
     }
-  }, [content, router]);
+  }, [content, mood, selectedTags, router, showToast]);
 
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -117,11 +103,10 @@ export default function RecordScreen() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const isRecording = recordingState === 'recording';
-  const isProcessing = recordingState === 'uploading' || recordingState === 'transcribing';
-
   return (
     <Screen safeAreaEdges={['left', 'right', 'bottom']}>
+      <Toast message={toast?.message || null} type={toast?.type || 'error'} onDismiss={dismissToast} />
+
       {/* Header */}
       <View
         className="px-6 pb-6"
@@ -132,98 +117,200 @@ export default function RecordScreen() {
       </View>
 
       {/* Content */}
-      <View
-        className="flex-1 px-5 pt-6"
-        style={{ marginTop: -16, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#0D1026' }}
+      <ScrollView
+        className="flex-1"
+        style={{ backgroundColor: '#0D1026' }}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Dream text input */}
-        <View className="mb-6">
-          <Text className="text-foreground text-base font-semibold mb-3">梦境内容</Text>
-          <View
-            className="bg-surface rounded-2xl border border-border/30 p-4"
-            style={{ minHeight: 180 }}
-          >
-            <TextInput
-              className="text-foreground text-sm leading-7"
-              style={{ minHeight: 140, textAlignVertical: 'top' }}
-              placeholder="描述你的梦境...越详细越好"
-              placeholderTextColor="#6B6890"
-              value={content}
-              onChangeText={setContent}
-              multiline
-              autoFocus
-            />
+        <View
+          className="px-5 pt-6"
+          style={{ marginTop: -16, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#0D1026' }}
+        >
+          {/* Dream text input */}
+          <View className="mb-6">
+            <Text className="text-foreground text-base font-semibold mb-3">梦境内容</Text>
+            <View
+              className="bg-surface rounded-2xl border border-border/30 p-4"
+              style={{ minHeight: 150 }}
+            >
+              <TextInput
+                className="text-foreground text-sm leading-7"
+                style={{ minHeight: 110, textAlignVertical: 'top' }}
+                placeholder="描述你的梦境...越详细越好"
+                placeholderTextColor="#6B6890"
+                value={content}
+                onChangeText={setContent}
+                multiline
+              />
+            </View>
           </View>
-        </View>
 
-        {/* Voice recording area */}
-        <View className="items-center mb-8">
-          <Text className="text-muted text-sm mb-5">或用语音快速记录</Text>
+          {/* Voice recording */}
+          <View className="items-center mb-6">
+            <Text className="text-muted text-sm mb-4">或用语音快速记录</Text>
 
-          {/* Recording indicator */}
-          {isRecording && (
-            <View className="flex-row items-center gap-2 mb-4">
-              <View className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-              <Text className="text-red-400 text-sm font-mono">{formatDuration(recordingDuration)}</Text>
+            {isRecording && (
+              <View className="flex-row items-center gap-2 mb-4">
+                <View className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                <Text className="text-red-400 text-sm font-mono">{formatDuration(recordingDuration)}</Text>
+              </View>
+            )}
+
+            {isProcessing && (
+              <View className="flex-row items-center gap-2 mb-4">
+                <ActivityIndicator size="small" color="#A78BFA" />
+                <Text className="text-muted text-sm">
+                  {isProcessing ? '识别中...' : '上传中...'}
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              onPress={handleVoiceRecord}
+              disabled={isProcessing}
+              className="items-center justify-center"
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 36,
+                backgroundColor: isRecording ? '#EF4444' : '#A78BFA',
+                shadowColor: isRecording ? '#EF4444' : '#A78BFA',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.4,
+                shadowRadius: 12,
+                elevation: 8,
+              }}
+            >
+              <FontAwesome6
+                name={isRecording ? 'stop' : 'microphone'}
+                size={24}
+                color="#FFFFFF"
+              />
+            </TouchableOpacity>
+            <Text className="text-muted text-xs mt-3">
+              {isRecording ? '点击停止录音' : '点击开始录音'}
+            </Text>
+          </View>
+
+          {/* Mood selection */}
+          <View className="mb-6">
+            <Text className="text-foreground text-base font-semibold mb-3">梦境感受</Text>
+            <View className="flex-row gap-3">
+              {MOOD_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => setMood(mood === opt.value ? '' : opt.value)}
+                  className="flex-1 py-3 rounded-2xl items-center border"
+                  style={{
+                    backgroundColor: mood === opt.value ? opt.color + '20' : 'rgba(30, 32, 60, 0.6)',
+                    borderColor: mood === opt.value ? opt.color + '60' : 'rgba(167, 139, 250, 0.15)',
+                  }}
+                >
+                  <FontAwesome6 name={opt.icon} size={18} color={mood === opt.value ? opt.color : '#6B6890'} />
+                  <Text
+                    className="text-xs mt-1 font-medium"
+                    style={{ color: mood === opt.value ? opt.color : '#6B6890' }}
+                  >
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-          )}
+          </View>
 
-          {isProcessing && (
-            <View className="flex-row items-center gap-2 mb-4">
-              <ActivityIndicator size="small" color="#A78BFA" />
-              <Text className="text-muted text-sm">
-                {recordingState === 'uploading' ? '上传中...' : '识别中...'}
-              </Text>
+          {/* Tags */}
+          <View className="mb-8">
+            <Text className="text-foreground text-base font-semibold mb-3">标签</Text>
+            <View className="flex-row flex-wrap gap-2 mb-3">
+              {PRESET_TAGS.map(tag => {
+                const isSelected = selectedTags.includes(tag);
+                return (
+                  <TouchableOpacity
+                    key={tag}
+                    onPress={() => toggleTag(tag)}
+                    className="px-4 py-2 rounded-full border"
+                    style={{
+                      backgroundColor: isSelected ? '#A78BFA20' : 'rgba(30, 32, 60, 0.6)',
+                      borderColor: isSelected ? '#A78BFA60' : 'rgba(167, 139, 250, 0.15)',
+                    }}
+                  >
+                    <Text
+                      className="text-xs font-medium"
+                      style={{ color: isSelected ? '#A78BFA' : '#6B6890' }}
+                    >
+                      {isSelected ? '✓ ' : ''}{tag}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {selectedTags.filter(t => !PRESET_TAGS.includes(t)).map(tag => (
+                <View
+                  key={tag}
+                  className="px-4 py-2 rounded-full border flex-row items-center gap-1"
+                  style={{ backgroundColor: '#67E8F920', borderColor: '#67E8F960' }}
+                >
+                  <Text className="text-xs font-medium" style={{ color: '#67E8F9' }}>{tag}</Text>
+                  <TouchableOpacity onPress={() => toggleTag(tag)}>
+                    <FontAwesome6 name="xmark" size={10} color="#67E8F9" />
+                  </TouchableOpacity>
+                </View>
+              ))}
             </View>
-          )}
 
-          {/* Record button */}
+            {/* Custom tag input */}
+            {selectedTags.length < 5 && (
+              <View className="flex-row gap-2">
+                <View className="flex-1 bg-surface rounded-xl border border-border/30 px-3 py-2">
+                  <TextInput
+                    className="text-foreground text-xs"
+                    placeholder="添加自定义标签..."
+                    placeholderTextColor="#6B6890"
+                    value={customTagInput}
+                    onChangeText={setCustomTagInput}
+                    onSubmitEditing={addCustomTag}
+                    maxLength={20}
+                    returnKeyType="done"
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={addCustomTag}
+                  disabled={!customTagInput.trim()}
+                  className="px-4 rounded-xl items-center justify-center"
+                  style={{
+                    backgroundColor: customTagInput.trim() ? '#A78BFA' : 'rgba(167, 139, 250, 0.3)',
+                  }}
+                >
+                  <FontAwesome6 name="plus" size={12} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {/* Save button */}
           <TouchableOpacity
-            onPress={isRecording ? stopRecording : startRecording}
-            disabled={isProcessing}
-            className="items-center justify-center"
+            onPress={handleSave}
+            disabled={!content.trim() || saving}
+            className="py-4 rounded-2xl items-center"
             style={{
-              width: 80,
-              height: 80,
-              borderRadius: 40,
-              backgroundColor: isRecording ? '#EF4444' : '#A78BFA',
-              shadowColor: isRecording ? '#EF4444' : '#A78BFA',
+              backgroundColor: content.trim() && !saving ? '#A78BFA' : 'rgba(167, 139, 250, 0.3)',
+              shadowColor: content.trim() && !saving ? '#A78BFA' : 'transparent',
               shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.4,
+              shadowOpacity: content.trim() && !saving ? 0.3 : 0,
               shadowRadius: 12,
-              elevation: 8,
+              elevation: content.trim() && !saving ? 4 : 0,
             }}
           >
-            <FontAwesome6
-              name={isRecording ? 'stop' : 'microphone'}
-              size={28}
-              color="#FFFFFF"
-            />
+            {saving ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <Text className="text-white text-base font-semibold">
+                保存并选择解梦师
+              </Text>
+            )}
           </TouchableOpacity>
-          <Text className="text-muted text-xs mt-3">
-            {isRecording ? '点击停止录音' : '点击开始录音'}
-          </Text>
         </View>
-
-        {/* Save button */}
-        <TouchableOpacity
-          onPress={handleSave}
-          disabled={!content.trim()}
-          className="py-4 rounded-2xl items-center"
-          style={{
-            backgroundColor: content.trim() ? '#A78BFA' : 'rgba(167, 139, 250, 0.3)',
-            shadowColor: content.trim() ? '#A78BFA' : 'transparent',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: content.trim() ? 0.3 : 0,
-            shadowRadius: 12,
-            elevation: content.trim() ? 4 : 0,
-          }}
-        >
-          <Text className="text-white text-base font-semibold">
-            保存并选择解梦师
-          </Text>
-        </TouchableOpacity>
-      </View>
+      </ScrollView>
     </Screen>
   );
 }

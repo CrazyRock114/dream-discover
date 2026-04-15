@@ -12,7 +12,8 @@ import { useFocusEffect } from 'expo-router';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
-import { fetchDreams, deleteDream, type Dream } from '@/utils/api';
+import { fetchDreams, deleteDream, type Dream, type DreamTag } from '@/utils/api';
+import { Toast, useToast } from '@/components/Toast';
 import dayjs from 'dayjs';
 
 const INTERPRETER_MAP: Record<string, { name: string; color: string }> = {
@@ -20,10 +21,25 @@ const INTERPRETER_MAP: Record<string, { name: string; color: string }> = {
   zhougong: { name: '周公', color: '#67E8F9' },
 };
 
+const MOOD_MAP: Record<string, { label: string; color: string; icon: string }> = {
+  good: { label: '好梦', color: '#A78BFA', icon: 'moon' },
+  bad: { label: '噩梦', color: '#EF4444', icon: 'ghost' },
+  neutral: { label: '中性', color: '#6B7280', icon: 'cloud' },
+};
+
+const MOOD_FILTERS = [
+  { value: '', label: '全部' },
+  { value: 'good', label: '好梦' },
+  { value: 'bad', label: '噩梦' },
+  { value: 'neutral', label: '中性' },
+];
+
 function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => void; onDelete: () => void }) {
   const interpreter = dream.interpreter ? INTERPRETER_MAP[dream.interpreter] : null;
+  const moodInfo = dream.mood ? MOOD_MAP[dream.mood] : null;
   const dateStr = dayjs(dream.created_at).format('MM/DD HH:mm');
   const preview = dream.content.length > 60 ? dream.content.slice(0, 60) + '...' : dream.content;
+  const tags = dream.tags || [];
 
   return (
     <TouchableOpacity
@@ -43,8 +59,20 @@ function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => 
         elevation: 4,
       }}
     >
-      <View className="flex-row justify-between items-start mb-3">
-        <Text className="text-muted text-xs">{dateStr}</Text>
+      {/* Top row: date + mood + interpreter */}
+      <View className="flex-row justify-between items-center mb-2">
+        <View className="flex-row items-center gap-2">
+          <Text className="text-muted text-xs">{dateStr}</Text>
+          {moodInfo && (
+            <View
+              className="px-2 py-0.5 rounded-full flex-row items-center gap-1"
+              style={{ backgroundColor: moodInfo.color + '20' }}
+            >
+              <FontAwesome6 name={moodInfo.icon} size={8} color={moodInfo.color} />
+              <Text className="text-xs" style={{ color: moodInfo.color }}>{moodInfo.label}</Text>
+            </View>
+          )}
+        </View>
         {interpreter && (
           <View
             className="px-3 py-1 rounded-full"
@@ -56,9 +84,13 @@ function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => 
           </View>
         )}
       </View>
+
+      {/* Content */}
       <Text className="text-foreground text-sm leading-6" numberOfLines={3}>
         {preview}
       </Text>
+
+      {/* Interpretation preview */}
       {dream.interpretation && (
         <View className="mt-3 pt-3 border-t border-border/20">
           <Text className="text-muted text-xs" numberOfLines={2}>
@@ -66,6 +98,29 @@ function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => 
               ? dream.interpretation.slice(0, 80) + '...'
               : dream.interpretation}
           </Text>
+        </View>
+      )}
+
+      {/* Tags */}
+      {tags.length > 0 && (
+        <View className="flex-row flex-wrap gap-1.5 mt-3">
+          {tags.slice(0, 4).map((tag: DreamTag) => (
+            <View
+              key={tag.id}
+              className="px-2.5 py-0.5 rounded-full"
+              style={{ backgroundColor: tag.is_custom ? '#67E8F915' : '#A78BFA15' }}
+            >
+              <Text
+                className="text-xs"
+                style={{ color: tag.is_custom ? '#67E8F9' : '#A78BFA' }}
+              >
+                {tag.tag}
+              </Text>
+            </View>
+          ))}
+          {tags.length > 4 && (
+            <Text className="text-muted text-xs self-center">+{tags.length - 4}</Text>
+          )}
         </View>
       )}
     </TouchableOpacity>
@@ -78,28 +133,32 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [moodFilter, setMoodFilter] = useState('');
+
+  const { toast, showToast, dismissToast } = useToast();
 
   const loadDreams = useCallback(async (reset = true) => {
     try {
-      const result = await fetchDreams(20, reset ? undefined : nextCursor || undefined);
+      const result = await fetchDreams(20, reset ? undefined : nextCursor || undefined, moodFilter || undefined);
       if (reset) {
         setDreams(result.data);
       } else {
         setDreams(prev => [...prev, ...result.data]);
       }
       setNextCursor(result.nextCursor);
-    } catch (e) {
-      console.error('Failed to load dreams:', e);
+    } catch {
+      showToast('加载梦境列表失败', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [nextCursor]);
+  }, [nextCursor, moodFilter, showToast]);
 
   useFocusEffect(
     useCallback(() => {
+      setLoading(true);
       loadDreams(true);
-    }, [])
+    }, [moodFilter])
   );
 
   const onRefresh = useCallback(() => {
@@ -119,8 +178,8 @@ export default function HomeScreen() {
     try {
       await deleteDream(id);
       setDreams(prev => prev.filter(d => d.id !== id));
-    } catch (e) {
-      console.error('Failed to delete dream:', e);
+    } catch {
+      showToast('删除失败', 'error');
     }
   };
 
@@ -136,9 +195,11 @@ export default function HomeScreen() {
 
   return (
     <Screen safeAreaEdges={['left', 'right', 'bottom']}>
+      <Toast message={toast?.message || null} type={toast?.type || 'error'} onDismiss={dismissToast} />
+
       {/* Header */}
       <View
-        className="px-6 pb-6"
+        className="px-6 pb-4"
         style={{
           paddingTop: 60,
           backgroundColor: '#0D1026',
@@ -158,6 +219,28 @@ export default function HomeScreen() {
         className="flex-1 px-5 pt-4"
         style={{ marginTop: -16, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#0D1026' }}
       >
+        {/* Mood filter tabs */}
+        <View className="flex-row gap-2 mb-4">
+          {MOOD_FILTERS.map(filter => (
+            <TouchableOpacity
+              key={filter.value}
+              onPress={() => setMoodFilter(filter.value)}
+              className="px-4 py-2 rounded-full border"
+              style={{
+                backgroundColor: moodFilter === filter.value ? '#A78BFA20' : 'rgba(30, 32, 60, 0.6)',
+                borderColor: moodFilter === filter.value ? '#A78BFA60' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              <Text
+                className="text-xs font-medium"
+                style={{ color: moodFilter === filter.value ? '#A78BFA' : '#6B6890' }}
+              >
+                {filter.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {dreams.length === 0 ? (
           <View className="flex-1 justify-center items-center px-10">
             <View className="w-20 h-20 rounded-full bg-accent/10 items-center justify-center mb-5">

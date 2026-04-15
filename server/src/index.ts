@@ -35,6 +35,11 @@ const storage = new S3Storage({
   region: "cn-beijing",
 });
 
+// ─── Device ID middleware ───
+function getDeviceId(req: express.Request): string {
+  return req.headers["x-device-id"] as string || req.query.device_id as string || "";
+}
+
 // ─── Health ───
 app.get("/api/v1/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
@@ -44,31 +49,78 @@ app.get("/api/v1/health", (_req, res) => {
 
 /**
  * GET /api/v1/dreams
- * Query: limit (default 20), cursor (created_at for pagination)
+ * Query: limit (default 20), cursor (created_at for pagination), mood?, tag?
+ * Header: x-device-id
  */
 app.get("/api/v1/dreams", async (req, res) => {
   try {
+    const deviceId = getDeviceId(req);
+    if (!deviceId) {
+      res.status(400).json({ error: "缺少设备标识" });
+      return;
+    }
+
     const client = getClient();
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const cursor = req.query.cursor as string | undefined;
+    const mood = req.query.mood as string | undefined;
+    const tag = req.query.tag as string | undefined;
 
     let query = client
       .from("dreams")
-      .select("id, content, audio_key, interpreter, interpretation, created_at")
+      .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
+      .eq("device_id", deviceId)
       .order("created_at", { ascending: false })
       .limit(limit + 1);
 
     if (cursor) {
       query = query.lt("created_at", cursor);
     }
+    if (mood) {
+      query = query.eq("mood", mood);
+    }
 
     const { data, error } = await query;
     if (error) throw new Error(`查询失败: ${error.message}`);
 
-    const hasMore = data && data.length > limit;
-    const items = hasMore ? data!.slice(0, limit) : data;
-    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].created_at : null;
+    let items = data || [];
+    const hasMore = items.length > limit;
+    if (hasMore) items = items.slice(0, limit);
 
+    // Filter by tag if specified
+    if (tag && items.length > 0) {
+      const dreamIds = items.map(d => d.id);
+      const { data: tagData } = await client
+        .from("dream_tags")
+        .select("dream_id")
+        .in("dream_id", dreamIds)
+        .eq("tag", tag);
+
+      const taggedDreamIds = new Set((tagData || []).map(t => t.dream_id));
+      items = items.filter(d => taggedDreamIds.has(d.id));
+    }
+
+    // Fetch tags for all dreams
+    if (items.length > 0) {
+      const dreamIds = items.map(d => d.id);
+      const { data: allTags } = await client
+        .from("dream_tags")
+        .select("id, dream_id, tag, is_custom")
+        .in("dream_id", dreamIds);
+
+      const tagMap: Record<number, Array<{ id: number; tag: string; is_custom: boolean }>> = {};
+      for (const t of allTags || []) {
+        if (!tagMap[t.dream_id]) tagMap[t.dream_id] = [];
+        tagMap[t.dream_id].push({ id: t.id, tag: t.tag, is_custom: t.is_custom });
+      }
+
+      items = items.map(d => ({
+        ...d,
+        tags: tagMap[d.id] || [],
+      }));
+    }
+
+    const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].created_at : null;
     res.json({ data: items, nextCursor });
   } catch (err: any) {
     console.error("GET /dreams error:", err);
@@ -78,25 +130,63 @@ app.get("/api/v1/dreams", async (req, res) => {
 
 /**
  * POST /api/v1/dreams
- * Body: { content: string, interpreter?: 'freud' | 'zhougong', audio_key?: string }
+ * Body: { content: string, device_id: string, interpreter?: string, audio_key?: string, mood?: string, tags?: string[] }
  */
 app.post("/api/v1/dreams", async (req, res) => {
   try {
-    const { content, interpreter, audio_key } = req.body;
+    const deviceId = getDeviceId(req) || req.body.device_id;
+    const { content, interpreter, audio_key, mood, tags } = req.body;
     if (!content || !content.trim()) {
       res.status(400).json({ error: "梦境内容不能为空" });
       return;
     }
+    if (!deviceId) {
+      res.status(400).json({ error: "缺少设备标识" });
+      return;
+    }
 
     const client = getClient();
+
+    // Validate mood
+    if (mood && !["good", "bad", "neutral"].includes(mood)) {
+      res.status(400).json({ error: "mood 只能是 good/bad/neutral" });
+      return;
+    }
+
     const { data, error } = await client
       .from("dreams")
-      .insert({ content: content.trim(), interpreter: interpreter || null, audio_key: audio_key || null })
-      .select("id, content, audio_key, interpreter, interpretation, created_at")
+      .insert({
+        content: content.trim(),
+        device_id: deviceId,
+        interpreter: interpreter || null,
+        audio_key: audio_key || null,
+        mood: mood || null,
+      })
+      .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .maybeSingle();
 
     if (error) throw new Error(`创建失败: ${error.message}`);
-    res.status(201).json(data);
+
+    if (!data) throw new Error("创建梦境失败：未返回数据");
+
+    // Insert tags if provided
+    if (tags && Array.isArray(tags) && tags.length > 0) {
+      const presetTags = ["灵感来源", "印象深刻", "有待深度解读"];
+      const tagRows = tags.map(tag => ({
+        dream_id: data.id,
+        tag,
+        is_custom: !presetTags.includes(tag),
+      }));
+      await client.from("dream_tags").insert(tagRows);
+    }
+
+    // Re-fetch with tags
+    const { data: tagData } = await client
+      .from("dream_tags")
+      .select("id, tag, is_custom")
+      .eq("dream_id", data.id);
+
+    res.status(201).json({ ...data, tags: tagData || [] });
   } catch (err: any) {
     console.error("POST /dreams error:", err);
     res.status(500).json({ error: err.message });
@@ -111,7 +201,7 @@ app.get("/api/v1/dreams/:id", async (req, res) => {
     const client = getClient();
     const { data, error } = await client
       .from("dreams")
-      .select("id, content, audio_key, interpreter, interpretation, created_at")
+      .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .eq("id", Number(req.params.id))
       .maybeSingle();
 
@@ -120,7 +210,14 @@ app.get("/api/v1/dreams/:id", async (req, res) => {
       res.status(404).json({ error: "梦境不存在" });
       return;
     }
-    res.json(data);
+
+    // Fetch tags
+    const { data: tagData } = await client
+      .from("dream_tags")
+      .select("id, tag, is_custom")
+      .eq("dream_id", data.id);
+
+    res.json({ ...data, tags: tagData || [] });
   } catch (err: any) {
     console.error("GET /dreams/:id error:", err);
     res.status(500).json({ error: err.message });
@@ -129,7 +226,7 @@ app.get("/api/v1/dreams/:id", async (req, res) => {
 
 /**
  * PATCH /api/v1/dreams/:id
- * Body: { interpreter?: string, interpretation?: string }
+ * Body: { interpreter?: string, interpretation?: string, mood?: string, tags?: string[] }
  */
 app.patch("/api/v1/dreams/:id", async (req, res) => {
   try {
@@ -137,16 +234,42 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
     const updates: Record<string, any> = {};
     if (req.body.interpreter !== undefined) updates.interpreter = req.body.interpreter;
     if (req.body.interpretation !== undefined) updates.interpretation = req.body.interpretation;
+    if (req.body.mood !== undefined) updates.mood = req.body.mood;
 
     const { data, error } = await client
       .from("dreams")
       .update(updates)
       .eq("id", Number(req.params.id))
-      .select("id, content, audio_key, interpreter, interpretation, created_at")
+      .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .maybeSingle();
 
     if (error) throw new Error(`更新失败: ${error.message}`);
-    res.json(data);
+
+    // Update tags if provided
+    if (req.body.tags !== undefined) {
+      const dreamId = Number(req.params.id);
+      // Delete existing tags
+      await client.from("dream_tags").delete().eq("dream_id", dreamId);
+
+      // Insert new tags
+      if (Array.isArray(req.body.tags) && req.body.tags.length > 0) {
+        const presetTags = ["灵感来源", "印象深刻", "有待深度解读"];
+        const tagRows = req.body.tags.map((tag: string) => ({
+          dream_id: dreamId,
+          tag,
+          is_custom: !presetTags.includes(tag),
+        }));
+        await client.from("dream_tags").insert(tagRows);
+      }
+    }
+
+    // Re-fetch tags
+    const { data: tagData } = await client
+      .from("dream_tags")
+      .select("id, tag, is_custom")
+      .eq("dream_id", Number(req.params.id));
+
+    res.json({ ...data, tags: tagData || [] });
   } catch (err: any) {
     console.error("PATCH /dreams/:id error:", err);
     res.status(500).json({ error: err.message });
@@ -268,7 +391,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     const client = getClient();
     const { data: dream, error } = await client
       .from("dreams")
-      .select("id, content")
+      .select("id, content, mood")
       .eq("id", Number(req.params.id))
       .maybeSingle();
 
@@ -282,7 +405,8 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     await client.from("dreams").update({ interpreter }).eq("id", dream.id);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
-    const userMessage = `我梦见了这样的场景：\n\n${dream.content}\n\n请为我解析这个梦境。`;
+    const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
+    const userMessage = `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;
 
     // Save user message
     await client.from("messages").insert({ dream_id: dream.id, role: "user", content: userMessage });

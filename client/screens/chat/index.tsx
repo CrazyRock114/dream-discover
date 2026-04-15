@@ -14,7 +14,9 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { Image } from 'expo-image';
 import RNSSE from 'react-native-sse';
-import { fetchDream, fetchMessages, type Dream, type Message } from '@/utils/api';
+import { fetchDream, fetchMessages, type Dream } from '@/utils/api';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { Toast, useToast } from '@/components/Toast';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
 
@@ -51,7 +53,6 @@ function connectSSE(
   onError: (err: any) => void
 ): { close: () => void } {
   if (Platform.OS === 'web') {
-    // Web 端：使用 fetch + ReadableStream 处理 SSE
     const controller = new AbortController();
     fetch(url, {
       method: 'POST',
@@ -66,16 +67,12 @@ function connectSSE(
         }
         const reader = (response as any).body?.getReader();
         if (!reader) {
-          // Fallback: 如果 ReadableStream 不可用，读取完整响应
           const text = await response.text();
           const lines = text.split('\n');
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6).trim();
-              if (data === '[DONE]') {
-                onDone();
-                return;
-              }
+              if (data === '[DONE]') { onDone(); return; }
               onMessage(data);
             }
           }
@@ -93,10 +90,7 @@ function connectSSE(
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6).trim();
-              if (data === '[DONE]') {
-                onDone();
-                return;
-              }
+              if (data === '[DONE]') { onDone(); return; }
               onMessage(data);
             }
           }
@@ -110,7 +104,7 @@ function connectSSE(
     return { close: () => controller.abort() };
   }
 
-  // Native 端：使用 react-native-sse
+  // Native: use react-native-sse
   const sse = new RNSSE(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -126,8 +120,8 @@ function connectSSE(
     onMessage(event.data);
   });
 
-  sse.addEventListener('error', (err: any) => {
-    onError(err);
+  sse.addEventListener('error', () => {
+    onError(new Error('SSE connection error'));
     sse.close();
   });
 
@@ -146,9 +140,17 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const sseCloseRef = useRef<(() => void) | null>(null);
+
+  const { toast, showToast, dismissToast } = useToast();
+  const {
+    isRecording: isVoiceRecording,
+    isProcessing: isVoiceProcessing,
+    recordingDuration,
+    startRecording: startVoiceRecording,
+    stopRecording: stopVoiceRecording,
+  } = useVoiceInput();
 
   // Helper: handle SSE data
   const handleSSEData = useCallback((assistantMsgId: string, rawData: string) => {
@@ -162,18 +164,17 @@ export default function ChatScreen() {
         );
       }
       if (parsed.error) {
-        setError(parsed.error);
+        showToast(parsed.error, 'error');
       }
     } catch {
       // Ignore parse errors
     }
-  }, []);
+  }, [showToast]);
 
   // Start interpretation via SSE
   const startInterpretation = useCallback(
     (dId: number, interp: string) => {
       setIsStreaming(true);
-      setError(null);
       const assistantMsgId = `stream-${Date.now()}`;
       setMessages(prev => [
         ...prev,
@@ -195,9 +196,9 @@ export default function ChatScreen() {
           );
           sseCloseRef.current = null;
         },
-        (err) => {
+        () => {
           setIsStreaming(false);
-          setError('连接解梦师失败，请重试');
+          showToast('连接解梦师失败，请重试', 'error');
           setMessages(prev =>
             prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
           );
@@ -206,7 +207,7 @@ export default function ChatScreen() {
       );
       sseCloseRef.current = conn.close;
     },
-    [handleSSEData]
+    [handleSSEData, showToast]
   );
 
   // Send follow-up message via SSE
@@ -222,7 +223,6 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setIsStreaming(true);
-    setError(null);
 
     const assistantMsgId = `stream-${Date.now()}`;
     setMessages(prev => [
@@ -242,9 +242,9 @@ export default function ChatScreen() {
         );
         sseCloseRef.current = null;
       },
-      (err) => {
+      () => {
         setIsStreaming(false);
-        setError('发送消息失败，请重试');
+        showToast('发送消息失败，请重试', 'error');
         setMessages(prev =>
           prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
         );
@@ -252,7 +252,24 @@ export default function ChatScreen() {
       }
     );
     sseCloseRef.current = conn.close;
-  }, [inputText, dreamId, interpreterStr, isStreaming, handleSSEData]);
+  }, [inputText, dreamId, interpreterStr, isStreaming, handleSSEData, showToast]);
+
+  // Voice input handler
+  const handleVoicePress = useCallback(async () => {
+    if (isVoiceRecording) {
+      const result = await stopVoiceRecording();
+      if (result.success && result.text) {
+        setInputText(prev => (prev ? prev + result.text : result.text));
+      } else if (result.error) {
+        showToast(result.error, 'error');
+      }
+    } else {
+      const result = await startVoiceRecording();
+      if (!result.success && result.error) {
+        showToast(result.error, 'error');
+      }
+    }
+  }, [isVoiceRecording, startVoiceRecording, stopVoiceRecording, showToast]);
 
   // Load dream and messages
   useEffect(() => {
@@ -277,14 +294,13 @@ export default function ChatScreen() {
           setMessages(chatMsgs);
         }
       } catch {
-        setError('加载梦境数据失败');
+        showToast('加载梦境数据失败', 'error');
       } finally {
         setInitialLoading(false);
       }
     };
 
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dreamId]);
 
   // Cleanup SSE on unmount
@@ -339,18 +355,9 @@ export default function ChatScreen() {
             >
               {item.streaming && !item.content ? (
                 <View className="flex-row gap-1 py-2 items-center">
-                  <View
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: config.color }}
-                  />
-                  <View
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: config.color }}
-                  />
-                  <View
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: config.color }}
-                  />
+                  <View className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color }} />
+                  <View className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color }} />
+                  <View className="w-2 h-2 rounded-full" style={{ backgroundColor: config.color }} />
                   <Text className="text-muted text-xs ml-2">正在思考...</Text>
                 </View>
               ) : (
@@ -377,8 +384,16 @@ export default function ChatScreen() {
     );
   }
 
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <Screen safeAreaEdges={['left', 'right']}>
+      <Toast message={toast?.message || null} type={toast?.type || 'error'} onDismiss={dismissToast} />
+
       {/* Header */}
       <View
         className="flex-row items-center px-5 pb-4"
@@ -402,13 +417,6 @@ export default function ChatScreen() {
         </View>
       </View>
 
-      {/* Error banner */}
-      {error && (
-        <View className="mx-5 mb-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30">
-          <Text className="text-red-400 text-sm">{error}</Text>
-        </View>
-      )}
-
       {/* Messages */}
       <KeyboardAvoidingView
         className="flex-1"
@@ -429,15 +437,47 @@ export default function ChatScreen() {
           }
         />
 
+        {/* Voice recording indicator */}
+        {isVoiceRecording && (
+          <View className="flex-row items-center justify-center gap-2 py-2">
+            <View className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+            <Text className="text-red-400 text-xs font-mono">{formatDuration(recordingDuration)}</Text>
+            <Text className="text-muted text-xs">录音中...</Text>
+          </View>
+        )}
+        {isVoiceProcessing && (
+          <View className="flex-row items-center justify-center gap-2 py-2">
+            <ActivityIndicator size="small" color="#A78BFA" />
+            <Text className="text-muted text-xs">识别中...</Text>
+          </View>
+        )}
+
         {/* Input bar */}
         <View
-          className="flex-row items-end gap-3 px-4 py-3"
+          className="flex-row items-end gap-2 px-4 py-3"
           style={{
             backgroundColor: 'rgba(20, 22, 46, 0.95)',
             borderTopColor: 'rgba(167, 139, 250, 0.15)',
             borderTopWidth: 1,
           }}
         >
+          {/* Voice button */}
+          <TouchableOpacity
+            onPress={handleVoicePress}
+            disabled={isStreaming || isVoiceProcessing}
+            className="w-10 h-10 rounded-full items-center justify-center"
+            style={{
+              backgroundColor: isVoiceRecording ? '#EF4444' : isVoiceProcessing ? 'rgba(167, 139, 250, 0.3)' : 'rgba(167, 139, 250, 0.15)',
+            }}
+          >
+            {isVoiceProcessing ? (
+              <ActivityIndicator size="small" color="#A78BFA" />
+            ) : (
+              <FontAwesome6 name="microphone" size={14} color={isVoiceRecording ? '#FFF' : '#A78BFA'} />
+            )}
+          </TouchableOpacity>
+
+          {/* Text input */}
           <View className="flex-1 bg-surface rounded-2xl border border-border/30 px-4 py-2">
             <TextInput
               className="text-foreground text-sm"
@@ -451,6 +491,8 @@ export default function ChatScreen() {
               style={{ maxHeight: 80 }}
             />
           </View>
+
+          {/* Send button */}
           <TouchableOpacity
             onPress={sendMessage}
             disabled={!inputText.trim() || isStreaming}

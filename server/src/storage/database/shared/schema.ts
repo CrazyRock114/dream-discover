@@ -1,4 +1,4 @@
-import { pgTable, serial, varchar, text, timestamp, integer, index } from "drizzle-orm/pg-core"
+import { pgTable, serial, varchar, text, timestamp, integer, boolean, index } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const healthCheck = pgTable("health_check", {
@@ -10,15 +10,33 @@ export const dreams = pgTable(
 	"dreams",
 	{
 		id: serial().primaryKey(),
+		device_id: varchar("device_id", { length: 64 }).notNull(),
 		content: text("content").notNull(),
 		audio_key: varchar("audio_key", { length: 512 }),
 		interpreter: varchar("interpreter", { length: 20 }),
 		interpretation: text("interpretation"),
+		mood: varchar("mood", { length: 20 }),
 		created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 	},
 	(table) => [
 		index("dreams_created_at_idx").on(table.created_at),
 		index("dreams_interpreter_idx").on(table.interpreter),
+		index("dreams_device_id_idx").on(table.device_id),
+		index("dreams_mood_idx").on(table.mood),
+	]
+);
+
+export const dream_tags = pgTable(
+	"dream_tags",
+	{
+		id: serial().primaryKey(),
+		dream_id: integer("dream_id").notNull().references(() => dreams.id, { onDelete: "cascade" }),
+		tag: varchar("tag", { length: 50 }).notNull(),
+		is_custom: boolean("is_custom").default(false).notNull(),
+		created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+	},
+	(table) => [
+		index("dream_tags_dream_id_idx").on(table.dream_id),
 	]
 );
 

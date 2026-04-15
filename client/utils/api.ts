@@ -1,4 +1,5 @@
 import { createFormDataFile } from '@/utils';
+import { getDeviceId } from '@/hooks/useDeviceId';
 
 /**
  * API 服务 - 梦境录后端接口调用
@@ -6,13 +7,22 @@ import { createFormDataFile } from '@/utils';
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
 
+export interface DreamTag {
+  id: number;
+  tag: string;
+  is_custom: boolean;
+}
+
 export interface Dream {
   id: number;
+  device_id: string;
   content: string;
   audio_key: string | null;
   interpreter: string | null;
   interpretation: string | null;
+  mood: string | null;
   created_at: string;
+  tags?: DreamTag[];
 }
 
 export interface Interpreter {
@@ -34,14 +44,29 @@ export interface Message {
 }
 
 /**
+ * 获取带 device_id 的 headers
+ */
+async function getHeaders(): Promise<Record<string, string>> {
+  const deviceId = await getDeviceId();
+  return {
+    'Content-Type': 'application/json',
+    'x-device-id': deviceId,
+  };
+}
+
+/**
  * 服务端文件：server/src/index.ts
  * 接口：GET /api/v1/dreams
- * Query 参数：limit?: number, cursor?: string
+ * Query 参数：limit?: number, cursor?: string, mood?: string, tag?: string
+ * Header: x-device-id: string
  */
-export async function fetchDreams(limit = 20, cursor?: string): Promise<{ data: Dream[]; nextCursor: string | null }> {
+export async function fetchDreams(limit = 20, cursor?: string, mood?: string, tag?: string): Promise<{ data: Dream[]; nextCursor: string | null }> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set('cursor', cursor);
-  const res = await fetch(`${BASE_URL}/api/v1/dreams?${params}`);
+  if (mood) params.set('mood', mood);
+  if (tag) params.set('tag', tag);
+  const headers = await getHeaders();
+  const res = await fetch(`${BASE_URL}/api/v1/dreams?${params}`, { headers });
   if (!res.ok) throw new Error('获取梦境列表失败');
   return res.json();
 }
@@ -49,15 +74,27 @@ export async function fetchDreams(limit = 20, cursor?: string): Promise<{ data: 
 /**
  * 服务端文件：server/src/index.ts
  * 接口：POST /api/v1/dreams
- * Body 参数：content: string, interpreter?: string, audio_key?: string
+ * Body 参数：content: string, interpreter?: string, audio_key?: string, mood?: string, tags?: string[]
+ * Header: x-device-id: string
  */
-export async function createDream(data: { content: string; interpreter?: string; audio_key?: string }): Promise<Dream> {
+export async function createDream(data: {
+  content: string;
+  interpreter?: string;
+  audio_key?: string;
+  mood?: string;
+  tags?: string[];
+}): Promise<Dream> {
+  const deviceId = await getDeviceId();
+  const headers = await getHeaders();
   const res = await fetch(`${BASE_URL}/api/v1/dreams`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    headers,
+    body: JSON.stringify({ ...data, device_id: deviceId }),
   });
-  if (!res.ok) throw new Error('创建梦境失败');
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || '创建梦境失败');
+  }
   return res.json();
 }
 
@@ -67,8 +104,30 @@ export async function createDream(data: { content: string; interpreter?: string;
  * Path 参数：id: number
  */
 export async function fetchDream(id: number): Promise<Dream> {
-  const res = await fetch(`${BASE_URL}/api/v1/dreams/${id}`);
+  const headers = await getHeaders();
+  const res = await fetch(`${BASE_URL}/api/v1/dreams/${id}`, { headers });
   if (!res.ok) throw new Error('获取梦境详情失败');
+  return res.json();
+}
+
+/**
+ * 服务端文件：server/src/index.ts
+ * 接口：PATCH /api/v1/dreams/:id
+ * Body 参数：interpreter?: string, interpretation?: string, mood?: string, tags?: string[]
+ */
+export async function updateDream(id: number, data: {
+  interpreter?: string;
+  interpretation?: string;
+  mood?: string;
+  tags?: string[];
+}): Promise<Dream> {
+  const headers = await getHeaders();
+  const res = await fetch(`${BASE_URL}/api/v1/dreams/${id}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('更新梦境失败');
   return res.json();
 }
 
@@ -78,7 +137,8 @@ export async function fetchDream(id: number): Promise<Dream> {
  * Path 参数：id: number
  */
 export async function deleteDream(id: number): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/v1/dreams/${id}`, { method: 'DELETE' });
+  const headers = await getHeaders();
+  const res = await fetch(`${BASE_URL}/api/v1/dreams/${id}`, { method: 'DELETE', headers });
   if (!res.ok) throw new Error('删除梦境失败');
 }
 
@@ -98,7 +158,8 @@ export async function fetchInterpreters(): Promise<Interpreter[]> {
  * Path 参数：id: number
  */
 export async function fetchMessages(dreamId: number): Promise<Message[]> {
-  const res = await fetch(`${BASE_URL}/api/v1/dreams/${dreamId}/messages`);
+  const headers = await getHeaders();
+  const res = await fetch(`${BASE_URL}/api/v1/dreams/${dreamId}/messages`, { headers });
   if (!res.ok) throw new Error('获取消息记录失败');
   return res.json();
 }
@@ -114,8 +175,12 @@ export async function uploadAudio(fileUri: string, mimeType: string): Promise<{ 
   const file = await createFormDataFile(fileUri, filename, mimeType);
   formData.append('file', file as any);
 
+  const headers = await getHeaders();
+  delete headers['Content-Type']; // Let FormData set its own Content-Type
+
   const res = await fetch(`${BASE_URL}/api/v1/upload/audio`, {
     method: 'POST',
+    headers,
     body: formData,
   });
   if (!res.ok) throw new Error('上传音频失败');
@@ -128,11 +193,15 @@ export async function uploadAudio(fileUri: string, mimeType: string): Promise<{ 
  * Body 参数：audio_key: string
  */
 export async function transcribeAudio(audio_key: string): Promise<{ text: string }> {
+  const headers = await getHeaders();
   const res = await fetch(`${BASE_URL}/api/v1/asr`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ audio_key }),
   });
-  if (!res.ok) throw new Error('语音转文字失败');
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || '语音转文字失败');
+  }
   return res.json();
 }
