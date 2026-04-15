@@ -22,7 +22,9 @@ export default function RootLayout() {
           headerShown: false
         }}
       >
-        <Stack.Screen name="index" options={{ title: "" }} />
+        <Stack.Screen name="(tabs)" options={{ title: "" }} />
+        <Stack.Screen name="interpreter-select" options={{ title: "选择解梦师" }} />
+        <Stack.Screen name="chat" options={{ title: "解梦对话" }} />
       </Stack>
       <Toast />
     </Provider>

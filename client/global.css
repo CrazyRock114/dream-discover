@@ -24,25 +24,25 @@
 @layer theme {
   :root {
     @variant light {
-      /* Base Colors */
-      --background: #fafafa;
-      --foreground: var(--eclipse);
+      /* Base Colors - 极光柔和风 Dream App */
+      --background: #0D1026;
+      --foreground: #E8E6F0;
 
       /* Surface: Used for non-overlay components (cards, accordions, disclosure groups) */
-      --surface: var(--white);
-      --surface-foreground: var(--foreground);
+      --surface: rgba(30, 32, 60, 0.85);
+      --surface-foreground: #E8E6F0;
 
       /* Overlay: Used for floating/overlay components (dialogs, popovers, modals, menus) */
-      --overlay: var(--white);
-      --overlay-foreground: var(--foreground);
+      --overlay: rgba(25, 27, 52, 0.95);
+      --overlay-foreground: #E8E6F0;
 
-      --muted: oklch(0.5517 0.0138 285.94);
+      --muted: oklch(0.65 0.02 280);
 
-      --default: oklch(94% 0.001 286.375);
-      --default-foreground: var(--eclipse);
+      --default: rgba(40, 42, 75, 0.9);
+      --default-foreground: #E8E6F0;
 
-      --accent: oklch(0.6204 0.195 253.83);
-      --accent-foreground: var(--snow);
+      --accent: #A78BFA;
+      --accent-foreground: #FFFFFF;
 
       /* Form Fields */
       --field-background: var(--white);
@@ -65,43 +65,37 @@
       --segment-foreground: var(--eclipse);
 
       /* Misc Colors */
-      --border: oklch(90% 0.004 286.32);
-      --separator: oklch(74% 0.004 286.32);
+      --border: rgba(167, 139, 250, 0.2);
+      --separator: rgba(167, 139, 250, 0.12);
       --focus: var(--accent);
       --link: var(--foreground);
 
       /* Shadows */
-      --surface-shadow:
-        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
-        0 0 1px 0 rgba(0, 0, 0, 0.06);
-      --overlay-shadow:
-        0 2px 8px 0 rgba(0, 0, 0, 0.04), 0 -6px 12px 0 rgba(0, 0, 0, 0.02),
-        0 14px 28px 0 rgba(0, 0, 0, 0.06);
-      --field-shadow:
-        0 2px 4px 0 rgba(0, 0, 0, 0.04), 0 1px 2px 0 rgba(0, 0, 0, 0.06),
-        0 0 1px 0 rgba(0, 0, 0, 0.06);
+      --surface-shadow: 0 4px 24px rgba(100, 80, 200, 0.1);
+      --overlay-shadow: 0 8px 32px rgba(100, 80, 200, 0.15);
+      --field-shadow: 0 2px 12px rgba(100, 80, 200, 0.08);
     }
 
     @variant dark {
-      /* Base Colors */
-      --background: #09090b;
-      --foreground: var(--snow);
+      /* Base Colors - 极光柔和风 Dream App */
+      --background: #0D1026;
+      --foreground: #E8E6F0;
 
-      /* Surface: Used for non-overlay components (cards, accordions, disclosure groups) */
-      --surface: oklch(0.2103 0.0059 285.89);
-      --surface-foreground: var(--foreground);
+      /* Surface */
+      --surface: rgba(30, 32, 60, 0.85);
+      --surface-foreground: #E8E6F0;
 
-      /* Overlay: Used for floating/overlay components (dialogs, popovers, modals, menus) - lighter for contrast */
-      --overlay: oklch(0.2103 0.0059 285.89);
-      --overlay-foreground: var(--foreground);
+      /* Overlay */
+      --overlay: rgba(25, 27, 52, 0.95);
+      --overlay-foreground: #E8E6F0;
 
-      --muted: oklch(70.5% 0.015 286.067);
+      --muted: oklch(0.65 0.02 280);
 
-      --default: oklch(27.4% 0.006 286.033);
-      --default-foreground: var(--snow);
+      --default: rgba(40, 42, 75, 0.9);
+      --default-foreground: #E8E6F0;
 
-      --accent: oklch(0.6204 0.195 253.83);
-      --accent-foreground: var(--snow);
+      --accent: #A78BFA;
+      --accent-foreground: #FFFFFF;
 
       /* Form Field Defaults - Colors (only the ones that are different from light theme) */
       --field-background: oklch(0.2103 0.0059 285.89);
@@ -124,15 +118,15 @@
       --segment-foreground: var(--foreground);
 
       /* Misc Colors */
-      --border: oklch(28% 0.006 286.033);
-      --separator: oklch(40% 0.006 286.033);
+      --border: rgba(167, 139, 250, 0.15);
+      --separator: rgba(167, 139, 250, 0.1);
       --focus: var(--accent);
       --link: var(--foreground);
 
       /* Shadows */
-      --surface-shadow: 0 0 0 0 transparent inset; /* No shadow on dark mode */
-      --overlay-shadow: 0 0 1px 0 rgba(255, 255, 255, 0.2) inset;
-      --field-shadow: 0 0 0 0 transparent inset; /* Transparent shadow to allow ring utilities to work */
+      --surface-shadow: 0 4px 24px rgba(100, 80, 200, 0.08);
+      --overlay-shadow: 0 8px 32px rgba(100, 80, 200, 0.12);
+      --field-shadow: 0 2px 12px rgba(100, 80, 200, 0.06);
     }
   }
 }
