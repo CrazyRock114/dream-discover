@@ -42,8 +42,6 @@ interface ChatMessage {
 
 /**
  * 统一的 SSE 连接函数，兼容 Web 和 Native
- * Web 端使用 fetch + ReadableStream（XHR POST 不支持增量读取）
- * Native 端使用 react-native-sse
  */
 function connectSSE(
   url: string,
@@ -176,8 +174,7 @@ export default function ChatScreen() {
     (dId: number, interp: string) => {
       setIsStreaming(true);
       const assistantMsgId = `stream-${Date.now()}`;
-      setMessages(prev => [
-        ...prev,
+      setMessages([
         { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
       ]);
 
@@ -270,6 +267,17 @@ export default function ChatScreen() {
       }
     }
   }, [isVoiceRecording, startVoiceRecording, stopVoiceRecording, showToast]);
+
+  /** Navigate to interpreter select to switch interpreter */
+  const handleSwitchInterpreter = useCallback(() => {
+    if (!dreamId) return;
+    if (isStreaming && sseCloseRef.current) {
+      sseCloseRef.current();
+      sseCloseRef.current = null;
+      setIsStreaming(false);
+    }
+    router.push('/interpreter-select', { dreamId });
+  }, [dreamId, isStreaming, router]);
 
   // Load dream and messages
   useEffect(() => {
@@ -402,18 +410,30 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => router.back()} className="mr-4">
           <FontAwesome6 name="arrow-left" size={18} color="#A78BFA" />
         </TouchableOpacity>
-        <View className="flex-row items-center gap-3">
+        <View className="flex-row items-center gap-3 flex-1">
           <Image
             source={{ uri: config.avatar }}
             style={{ width: 36, height: 36, borderRadius: 18 }}
             contentFit="cover"
           />
-          <View>
+          <View className="flex-1">
             <Text className="text-foreground text-base font-semibold">{config.name}</Text>
             <Text className="text-muted text-xs">
               {isStreaming ? '正在解梦...' : '解梦师'}
             </Text>
           </View>
+          {/* Switch interpreter button */}
+          <TouchableOpacity
+            onPress={handleSwitchInterpreter}
+            disabled={isStreaming}
+            className="px-3 py-2 rounded-xl border border-border/30"
+            style={{ backgroundColor: 'rgba(30, 32, 60, 0.6)' }}
+          >
+            <View className="flex-row items-center gap-1.5">
+              <FontAwesome6 name="repeat" size={10} color="#A78BFA" />
+              <Text className="text-accent text-xs font-medium">换人</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
 

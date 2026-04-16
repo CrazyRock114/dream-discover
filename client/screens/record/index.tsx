@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
@@ -13,6 +14,7 @@ import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { createDream } from '@/utils/api';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { Toast, useToast } from '@/components/Toast';
+import { useKeepAwake } from 'expo-keep-awake';
 
 const PRESET_TAGS = ['灵感来源', '印象深刻', '有待深度解读'];
 
@@ -23,6 +25,9 @@ const MOOD_OPTIONS = [
 ] as const;
 
 export default function RecordScreen() {
+  // Prevent screen from sleeping while on this page (important during voice recording)
+  useKeepAwake();
+
   const router = useSafeRouter();
   const [content, setContent] = useState('');
   const [mood, setMood] = useState<string>('');
@@ -37,6 +42,7 @@ export default function RecordScreen() {
     recordingDuration,
     startRecording,
     stopRecording,
+    cancelRecording,
   } = useVoiceInput();
 
   const toggleTag = useCallback((tag: string) => {
@@ -97,6 +103,29 @@ export default function RecordScreen() {
     }
   }, [content, mood, selectedTags, router, showToast]);
 
+  /** Clear all input and start a new dream record */
+  const handleClearAll = useCallback(() => {
+    if (!content && !mood && selectedTags.length === 0) return;
+
+    Alert.alert('开始新记录', '将清空当前所有输入内容，确定吗？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '清空',
+        style: 'destructive',
+        onPress: async () => {
+          if (isRecording) {
+            await cancelRecording();
+          }
+          setContent('');
+          setMood('');
+          setSelectedTags([]);
+          setCustomTagInput('');
+          showToast('已清空，开始新记录', 'success');
+        },
+      },
+    ]);
+  }, [content, mood, selectedTags, isRecording, cancelRecording, showToast]);
+
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -109,11 +138,24 @@ export default function RecordScreen() {
 
       {/* Header */}
       <View
-        className="px-6 pb-6"
+        className="px-6 pb-6 flex-row items-center justify-between"
         style={{ paddingTop: 60, backgroundColor: '#0D1026' }}
       >
-        <Text className="text-foreground text-2xl font-bold">录梦</Text>
-        <Text className="text-muted text-sm mt-1">醒来第一件事，记录你的梦</Text>
+        <View>
+          <Text className="text-foreground text-2xl font-bold">录梦</Text>
+          <Text className="text-muted text-sm mt-1">醒来第一件事，记录你的梦</Text>
+        </View>
+        {/* Clear / New dream button */}
+        <TouchableOpacity
+          onPress={handleClearAll}
+          className="px-3 py-2 rounded-xl border border-border/30"
+          style={{ backgroundColor: 'rgba(30, 32, 60, 0.6)' }}
+        >
+          <View className="flex-row items-center gap-1.5">
+            <FontAwesome6 name="rotate" size={10} color="#A78BFA" />
+            <Text className="text-accent text-xs font-medium">新记录</Text>
+          </View>
+        </TouchableOpacity>
       </View>
 
       {/* Content */}

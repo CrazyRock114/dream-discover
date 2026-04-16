@@ -34,6 +34,8 @@ const MOOD_FILTERS = [
   { value: 'neutral', label: '中性' },
 ];
 
+const PRESET_TAG_FILTERS = ['灵感来源', '印象深刻', '有待深度解读'];
+
 function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => void; onDelete: () => void }) {
   const interpreter = dream.interpreter ? INTERPRETER_MAP[dream.interpreter] : null;
   const moodInfo = dream.mood ? MOOD_MAP[dream.mood] : null;
@@ -134,31 +136,54 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [showTagFilters, setShowTagFilters] = useState(false);
+  /** All unique tags from loaded dreams, for the filter bar */
+  const [allTags, setAllTags] = useState<string[]>([]);
 
   const { toast, showToast, dismissToast } = useToast();
 
-  const loadDreams = useCallback(async (reset = true) => {
+  const loadDreams = useCallback(async (reset = true, mood?: string, tag?: string) => {
     try {
-      const result = await fetchDreams(20, reset ? undefined : nextCursor || undefined, moodFilter || undefined);
+      const effectiveMood = mood !== undefined ? mood : moodFilter;
+      const effectiveTag = tag !== undefined ? tag : tagFilter;
+      const result = await fetchDreams(
+        20,
+        reset ? undefined : nextCursor || undefined,
+        effectiveMood || undefined,
+        effectiveTag || undefined,
+      );
       if (reset) {
         setDreams(result.data);
       } else {
         setDreams(prev => [...prev, ...result.data]);
       }
       setNextCursor(result.nextCursor);
+
+      // Collect all unique tags from loaded dreams for filter chips
+      if (reset) {
+        const tagSet = new Set<string>();
+        for (const dream of result.data) {
+          for (const t of dream.tags || []) {
+            tagSet.add(t.tag);
+          }
+        }
+        setAllTags(Array.from(tagSet));
+      }
     } catch {
       showToast('加载梦境列表失败', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [nextCursor, moodFilter, showToast]);
+  }, [nextCursor, moodFilter, tagFilter, showToast]);
 
   useFocusEffect(
     useCallback(() => {
       setLoading(true);
       loadDreams(true);
-    }, [moodFilter])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [moodFilter, tagFilter])
   );
 
   const onRefresh = useCallback(() => {
@@ -211,7 +236,7 @@ export default function HomeScreen() {
           </View>
           <Text className="text-foreground text-2xl font-bold">梦境录</Text>
         </View>
-        <Text className="text-muted text-sm ml-13">记录每一个梦，解读每一个谜</Text>
+        <Text className="text-muted text-sm" style={{ marginLeft: 52 }}>记录每一个梦，解读每一个谜</Text>
       </View>
 
       {/* Content */}
@@ -220,11 +245,13 @@ export default function HomeScreen() {
         style={{ marginTop: -16, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#0D1026' }}
       >
         {/* Mood filter tabs */}
-        <View className="flex-row gap-2 mb-4">
+        <View className="flex-row items-center gap-2 mb-3">
           {MOOD_FILTERS.map(filter => (
             <TouchableOpacity
               key={filter.value}
-              onPress={() => setMoodFilter(filter.value)}
+              onPress={() => {
+                setMoodFilter(filter.value);
+              }}
               className="px-4 py-2 rounded-full border"
               style={{
                 backgroundColor: moodFilter === filter.value ? '#A78BFA20' : 'rgba(30, 32, 60, 0.6)',
@@ -239,7 +266,94 @@ export default function HomeScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+
+          {/* Tag filter toggle */}
+          <TouchableOpacity
+            onPress={() => setShowTagFilters(!showTagFilters)}
+            className="px-4 py-2 rounded-full border flex-row items-center gap-1.5"
+            style={{
+              backgroundColor: tagFilter ? '#67E8F920' : showTagFilters ? 'rgba(103, 232, 249, 0.1)' : 'rgba(30, 32, 60, 0.6)',
+              borderColor: tagFilter ? '#67E8F960' : 'rgba(167, 139, 250, 0.15)',
+            }}
+          >
+            <FontAwesome6 name="tag" size={9} color={tagFilter ? '#67E8F9' : '#6B6890'} />
+            <Text
+              className="text-xs font-medium"
+              style={{ color: tagFilter ? '#67E8F9' : '#6B6890' }}
+            >
+              {tagFilter || '标签'}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Tag filter chips (expandable) */}
+        {showTagFilters && (
+          <View className="flex-row flex-wrap gap-2 mb-3">
+            {PRESET_TAG_FILTERS.map(tag => (
+              <TouchableOpacity
+                key={tag}
+                onPress={() => {
+                  setTagFilter(tagFilter === tag ? '' : tag);
+                  setShowTagFilters(false);
+                }}
+                className="px-3 py-1.5 rounded-full border"
+                style={{
+                  backgroundColor: tagFilter === tag ? '#67E8F920' : 'rgba(30, 32, 60, 0.6)',
+                  borderColor: tagFilter === tag ? '#67E8F960' : 'rgba(103, 232, 249, 0.15)',
+                }}
+              >
+                <Text
+                  className="text-xs"
+                  style={{ color: tagFilter === tag ? '#67E8F9' : '#6B6890' }}
+                >
+                  {tag}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {/* Custom tags from user's dreams */}
+            {allTags
+              .filter(t => !PRESET_TAG_FILTERS.includes(t))
+              .map(tag => (
+                <TouchableOpacity
+                  key={tag}
+                  onPress={() => {
+                    setTagFilter(tagFilter === tag ? '' : tag);
+                    setShowTagFilters(false);
+                  }}
+                  className="px-3 py-1.5 rounded-full border"
+                  style={{
+                    backgroundColor: tagFilter === tag ? '#67E8F920' : 'rgba(30, 32, 60, 0.6)',
+                    borderColor: tagFilter === tag ? '#67E8F960' : 'rgba(103, 232, 249, 0.15)',
+                  }}
+                >
+                  <Text
+                    className="text-xs"
+                    style={{ color: tagFilter === tag ? '#67E8F9' : '#6B6890' }}
+                  >
+                    {tag}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+          </View>
+        )}
+
+        {/* Active filter indicator */}
+        {(moodFilter || tagFilter) && (
+          <View className="flex-row items-center justify-between mb-3">
+            <Text className="text-muted text-xs">
+              筛选: {moodFilter ? MOOD_MAP[moodFilter]?.label : ''}{moodFilter && tagFilter ? ' + ' : ''}{tagFilter || ''}
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setMoodFilter('');
+                setTagFilter('');
+                setShowTagFilters(false);
+              }}
+            >
+              <Text className="text-accent text-xs">清除筛选</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {dreams.length === 0 ? (
           <View className="flex-1 justify-center items-center px-10">

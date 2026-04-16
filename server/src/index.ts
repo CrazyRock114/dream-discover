@@ -401,8 +401,11 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
       return;
     }
 
-    // Update dream with interpreter
-    await client.from("dreams").update({ interpreter }).eq("id", dream.id);
+    // Update dream with interpreter and clear old interpretation
+    await client.from("dreams").update({ interpreter, interpretation: null }).eq("id", dream.id);
+
+    // Clear old messages for this dream (supports re-interpretation with a different interpreter)
+    await client.from("messages").delete().eq("dream_id", dream.id);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
