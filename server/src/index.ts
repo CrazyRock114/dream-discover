@@ -194,6 +194,55 @@ app.post("/api/v1/dreams", async (req, res) => {
 });
 
 /**
+ * GET /api/v1/dreams/find
+ * Query: content (exact match), interpreter
+ * Header: x-device-id
+ * Returns: existing dream record or null
+ */
+app.get("/api/v1/dreams/find", async (req, res) => {
+  try {
+    const deviceId = getDeviceId(req);
+    if (!deviceId) {
+      res.status(400).json({ error: "缺少设备标识" });
+      return;
+    }
+    const content = req.query.content as string;
+    const interpreter = req.query.interpreter as string;
+    if (!content || !interpreter) {
+      res.status(400).json({ error: "content 和 interpreter 不能为空" });
+      return;
+    }
+
+    const client = getClient();
+    const { data, error } = await client
+      .from("dreams")
+      .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
+      .eq("device_id", deviceId)
+      .eq("content", content.trim())
+      .eq("interpreter", interpreter)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(`查询失败: ${error.message}`);
+
+    // Fetch tags if found
+    if (data) {
+      const { data: tagData } = await client
+        .from("dream_tags")
+        .select("id, tag, is_custom")
+        .eq("dream_id", data.id);
+      res.json({ ...data, tags: tagData || [] });
+    } else {
+      res.json(null);
+    }
+  } catch (err: any) {
+    console.error("GET /dreams/find error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/v1/dreams/:id
  */
 app.get("/api/v1/dreams/:id", async (req, res) => {
@@ -463,12 +512,12 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
 
 /**
  * POST /api/v1/dreams/:id/chat
- * Body: { message: string, interpreter: 'freud' | 'zhougong' }
+ * Body: { message: string, interpreter: 'freud' | 'zhougong', mode?: 'verbose' | 'concise' }
  * SSE streaming response
  */
 app.post("/api/v1/dreams/:id/chat", async (req, res) => {
   try {
-    const { message, interpreter } = req.body;
+    const { message, interpreter, mode } = req.body;
     if (!message || !message.trim()) {
       res.status(400).json({ error: "消息不能为空" });
       return;
@@ -477,6 +526,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
       res.status(400).json({ error: "请选择解梦师：freud 或 zhougong" });
       return;
     }
+    const isConcise = mode === "concise";
 
     const client = getClient();
     const { data: dream, error: dreamError } = await client
@@ -511,8 +561,11 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
 
     // Build messages array
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
+    const conciseSuffix = isConcise
+      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。"
+      : "";
     const llmMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: systemPrompt + conciseSuffix },
       { role: "user", content: `我梦见了这样的场景：\n\n${dream.content}\n\n请为我解析这个梦境。` },
     ];
 

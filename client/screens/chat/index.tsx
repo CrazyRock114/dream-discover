@@ -128,10 +128,9 @@ function connectSSE(
 
 export default function ChatScreen() {
   const router = useSafeRouter();
-  const params = useSafeSearchParams<{ dreamId: number; interpreter: string; mode: string }>();
+  const params = useSafeSearchParams<{ dreamId: number; interpreter: string }>();
   const dreamId = params.dreamId;
   const interpreterStr = params.interpreter || 'freud';
-  const modeStr = params.mode || 'verbose';
   const config = INTERPRETER_CONFIG[interpreterStr] || INTERPRETER_CONFIG.freud;
 
   const [dream, setDream] = useState<Dream | null>(null);
@@ -139,6 +138,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [verboseMode, setVerboseMode] = useState(true); // true = 详细, false = 精简
   const flatListRef = useRef<FlatList>(null);
   const sseCloseRef = useRef<(() => void) | null>(null);
 
@@ -179,6 +179,11 @@ export default function ChatScreen() {
         { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
       ]);
 
+      /**
+       * 服务端文件：server/src/index.ts
+       * 接口：POST /api/v1/dreams/:id/interpret
+       * Body 参数：interpreter: 'freud'|'zhougong', mode?: 'verbose'|'concise'
+       */
       const url = `${BASE_URL}/api/v1/dreams/${dId}/interpret`;
 
       const conn = connectSSE(
@@ -228,10 +233,16 @@ export default function ChatScreen() {
       { id: assistantMsgId, role: 'assistant', content: '', streaming: true },
     ]);
 
+    /**
+     * 服务端文件：server/src/index.ts
+     * 接口：POST /api/v1/dreams/:id/chat
+     * Body 参数：message: string, interpreter: 'freud'|'zhougong', mode?: 'verbose'|'concise'
+     */
     const url = `${BASE_URL}/api/v1/dreams/${dreamId}/chat`;
+    const currentMode = verboseMode ? 'verbose' : 'concise';
     const conn = connectSSE(
       url,
-      { message: msg, interpreter: interpreterStr },
+      { message: msg, interpreter: interpreterStr, mode: currentMode },
       (data) => handleSSEData(assistantMsgId, data),
       () => {
         setIsStreaming(false);
@@ -250,7 +261,7 @@ export default function ChatScreen() {
       }
     );
     sseCloseRef.current = conn.close;
-  }, [inputText, dreamId, interpreterStr, isStreaming, handleSSEData, showToast]);
+  }, [inputText, dreamId, interpreterStr, isStreaming, verboseMode, handleSSEData, showToast]);
 
   // Voice input handler
   const handleVoicePress = useCallback(async () => {
@@ -269,7 +280,7 @@ export default function ChatScreen() {
     }
   }, [isVoiceRecording, startVoiceRecording, stopVoiceRecording, showToast]);
 
-  /** Navigate to interpreter select to switch interpreter — carries only dream content, creates new record */
+  /** Navigate to interpreter select to switch interpreter — carries only dream content */
   const handleSwitchInterpreter = useCallback(() => {
     if (!dream) return;
     if (isStreaming && sseCloseRef.current) {
@@ -277,7 +288,7 @@ export default function ChatScreen() {
       sseCloseRef.current = null;
       setIsStreaming(false);
     }
-    // Pass dream content (not dreamId) so a new independent record is created
+    // Pass dream content (not dreamId) so we can find or create a record for the new interpreter
     router.push('/interpreter-select', {
       dreamContent: dream.content,
       dreamMood: dream.mood || '',
@@ -302,7 +313,7 @@ export default function ChatScreen() {
 
         // If no messages yet, start interpretation
         if (chatMsgs.length === 0) {
-          startInterpretation(dreamId, interpreterStr, modeStr);
+          startInterpretation(dreamId, interpreterStr, verboseMode ? 'verbose' : 'concise');
         } else {
           setMessages(chatMsgs);
         }
@@ -477,62 +488,102 @@ export default function ChatScreen() {
           </View>
         )}
 
-        {/* Input bar */}
+        {/* Mode toggle + Input bar */}
         <View
-          className="flex-row items-end gap-2 px-4 py-3"
           style={{
             backgroundColor: 'rgba(20, 22, 46, 0.95)',
             borderTopColor: 'rgba(167, 139, 250, 0.15)',
             borderTopWidth: 1,
           }}
         >
-          {/* Voice button */}
-          <TouchableOpacity
-            onPress={handleVoicePress}
-            disabled={isStreaming || isVoiceProcessing}
-            className="w-10 h-10 rounded-full items-center justify-center"
-            style={{
-              backgroundColor: isVoiceRecording ? '#EF4444' : isVoiceProcessing ? 'rgba(167, 139, 250, 0.3)' : 'rgba(167, 139, 250, 0.15)',
-            }}
-          >
-            {isVoiceProcessing ? (
-              <ActivityIndicator size="small" color="#A78BFA" />
-            ) : (
-              <FontAwesome6 name="microphone" size={14} color={isVoiceRecording ? '#FFF' : '#A78BFA'} />
-            )}
-          </TouchableOpacity>
-
-          {/* Text input */}
-          <View className="flex-1 bg-surface rounded-2xl border border-border/30 px-4 py-2">
-            <TextInput
-              className="text-foreground text-sm"
-              placeholder="继续向解梦师咨询..."
-              placeholderTextColor="#6B6890"
-              value={inputText}
-              onChangeText={setInputText}
-              multiline
-              maxLength={500}
-              editable={!isStreaming}
-              style={{ maxHeight: 80 }}
-            />
+          {/* Mode toggle row */}
+          <View className="flex-row items-center justify-center gap-1 pt-2 px-4">
+            <TouchableOpacity
+              onPress={() => setVerboseMode(true)}
+              disabled={isStreaming}
+              className="flex-row items-center gap-1 px-3 py-1.5 rounded-full border"
+              style={{
+                backgroundColor: verboseMode ? 'rgba(167, 139, 250, 0.15)' : 'transparent',
+                borderColor: verboseMode ? 'rgba(167, 139, 250, 0.4)' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              <FontAwesome6 name="align-left" size={8} color={verboseMode ? '#A78BFA' : '#6B6890'} />
+              <Text
+                className="text-xs font-medium"
+                style={{ color: verboseMode ? '#A78BFA' : '#6B6890' }}
+              >
+                详细
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setVerboseMode(false)}
+              disabled={isStreaming}
+              className="flex-row items-center gap-1 px-3 py-1.5 rounded-full border"
+              style={{
+                backgroundColor: !verboseMode ? 'rgba(103, 232, 249, 0.15)' : 'transparent',
+                borderColor: !verboseMode ? 'rgba(103, 232, 249, 0.4)' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              <FontAwesome6 name="compress" size={8} color={!verboseMode ? '#67E8F9' : '#6B6890'} />
+              <Text
+                className="text-xs font-medium"
+                style={{ color: !verboseMode ? '#67E8F9' : '#6B6890' }}
+              >
+                精简
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Send button */}
-          <TouchableOpacity
-            onPress={sendMessage}
-            disabled={!inputText.trim() || isStreaming}
-            className="w-10 h-10 rounded-full items-center justify-center"
-            style={{
-              backgroundColor:
-                inputText.trim() && !isStreaming ? '#A78BFA' : 'rgba(167, 139, 250, 0.3)',
-            }}
-          >
-            {isStreaming ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <FontAwesome6 name="paper-plane" size={14} color="#FFF" />
-            )}
-          </TouchableOpacity>
+          {/* Input row */}
+          <View className="flex-row items-end gap-2 px-4 py-3">
+            {/* Voice button */}
+            <TouchableOpacity
+              onPress={handleVoicePress}
+              disabled={isStreaming || isVoiceProcessing}
+              className="w-10 h-10 rounded-full items-center justify-center"
+              style={{
+                backgroundColor: isVoiceRecording ? '#EF4444' : isVoiceProcessing ? 'rgba(167, 139, 250, 0.3)' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              {isVoiceProcessing ? (
+                <ActivityIndicator size="small" color="#A78BFA" />
+              ) : (
+                <FontAwesome6 name="microphone" size={14} color={isVoiceRecording ? '#FFF' : '#A78BFA'} />
+              )}
+            </TouchableOpacity>
+
+            {/* Text input */}
+            <View className="flex-1 bg-surface rounded-2xl border border-border/30 px-4 py-2">
+              <TextInput
+                className="text-foreground text-sm"
+                placeholder="继续向解梦师咨询..."
+                placeholderTextColor="#6B6890"
+                value={inputText}
+                onChangeText={setInputText}
+                multiline
+                maxLength={500}
+                editable={!isStreaming}
+                style={{ maxHeight: 80 }}
+              />
+            </View>
+
+            {/* Send button */}
+            <TouchableOpacity
+              onPress={sendMessage}
+              disabled={!inputText.trim() || isStreaming}
+              className="w-10 h-10 rounded-full items-center justify-center"
+              style={{
+                backgroundColor:
+                  inputText.trim() && !isStreaming ? '#A78BFA' : 'rgba(167, 139, 250, 0.3)',
+              }}
+            >
+              {isStreaming ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <FontAwesome6 name="paper-plane" size={14} color="#FFF" />
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Screen>

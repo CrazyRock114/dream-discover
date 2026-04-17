@@ -205,3 +205,25 @@ export async function transcribeAudio(audio_key: string): Promise<{ text: string
   }
   return res.json();
 }
+
+/**
+ * 服务端文件：server/src/index.ts
+ * 接口：GET /api/v1/dreams/find
+ * Query 参数：content: string (exact match), interpreter: string
+ * Header: x-device-id: string
+ * 返回：已有的 Dream 记录或 null
+ */
+export async function findDream(content: string, interpreter: string): Promise<Dream | null> {
+  const headers = await getHeaders();
+  const params = new URLSearchParams({
+    content: content.trim(),
+    interpreter,
+  });
+  const res = await fetch(`${BASE_URL}/api/v1/dreams/find?${params}`, { headers });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || '查找梦境失败');
+  }
+  const data = await res.json();
+  return data; // null or Dream object
+}

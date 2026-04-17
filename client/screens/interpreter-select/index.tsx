@@ -4,7 +4,7 @@ import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { Image } from 'expo-image';
-import { createDream, type Interpreter } from '@/utils/api';
+import { createDream, findDream, type Interpreter } from '@/utils/api';
 
 const INTERPRETER_DATA: Interpreter[] = [
   {
@@ -39,7 +39,6 @@ export default function InterpreterSelectScreen() {
   const dreamMood = params.dreamMood;
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [verboseMode, setVerboseMode] = useState(true); // true = 详细, false = 精简
   const [loading, setLoading] = useState(false);
 
   const handleConfirm = useCallback(async () => {
@@ -48,15 +47,31 @@ export default function InterpreterSelectScreen() {
     try {
       let targetDreamId: number;
 
-      // If coming from "switch interpreter" (has dreamContent), always create a NEW record
-      // so each interpreter+mode combination is an independent, comparable record
       if (dreamContent) {
-        const newDream = await createDream({
-          content: dreamContent,
-          mood: dreamMood || undefined,
-          interpreter: selected,
-        });
-        targetDreamId = newDream.id;
+        // Coming from "switch interpreter" — check if a record with same content+interpreter already exists
+        try {
+          const existingDream = await findDream(dreamContent, selected);
+          if (existingDream) {
+            // Found existing record for this interpreter — navigate to it (resume conversation)
+            targetDreamId = existingDream.id;
+          } else {
+            // No existing record — create a new one for this interpreter
+            const newDream = await createDream({
+              content: dreamContent,
+              mood: dreamMood || undefined,
+              interpreter: selected,
+            });
+            targetDreamId = newDream.id;
+          }
+        } catch {
+          // If find fails, fall back to creating new record
+          const newDream = await createDream({
+            content: dreamContent,
+            mood: dreamMood || undefined,
+            interpreter: selected,
+          });
+          targetDreamId = newDream.id;
+        }
       } else if (dreamId) {
         // First time from record page — use existing dream record
         targetDreamId = dreamId;
@@ -68,14 +83,13 @@ export default function InterpreterSelectScreen() {
       router.push('/chat', {
         dreamId: targetDreamId,
         interpreter: selected,
-        mode: verboseMode ? 'verbose' : 'concise',
       });
     } catch (e) {
       Alert.alert('解梦失败', '无法启动解梦，请重试');
     } finally {
       setLoading(false);
     }
-  }, [selected, dreamId, dreamContent, dreamMood, verboseMode, router]);
+  }, [selected, dreamId, dreamContent, dreamMood, router]);
 
   // Show dream content preview if available
   const previewContent = dreamContent || '';
@@ -180,64 +194,6 @@ export default function InterpreterSelectScreen() {
               </TouchableOpacity>
             );
           })}
-
-          {/* Output length toggle */}
-          <View
-            className="mb-5 rounded-2xl border border-border/30 p-4"
-            style={{ backgroundColor: 'rgba(30, 32, 60, 0.6)' }}
-          >
-            <View className="flex-row items-center justify-between mb-2">
-              <View className="flex-row items-center gap-2">
-                <FontAwesome6 name="text-height" size={12} color="#A78BFA" />
-                <Text className="text-foreground text-sm font-medium">输出长度</Text>
-              </View>
-            </View>
-            <View className="flex-row gap-2">
-              {/* Verbose (详细) */}
-              <TouchableOpacity
-                onPress={() => setVerboseMode(true)}
-                className="flex-1 py-2.5 rounded-xl border items-center"
-                style={{
-                  backgroundColor: verboseMode ? '#A78BFA20' : 'rgba(30, 32, 60, 0.4)',
-                  borderColor: verboseMode ? '#A78BFA60' : 'rgba(167, 139, 250, 0.15)',
-                }}
-              >
-                <Text
-                  className="text-xs font-medium"
-                  style={{ color: verboseMode ? '#A78BFA' : '#6B6890' }}
-                >
-                  详细解读
-                </Text>
-                <Text className="text-xs mt-0.5" style={{ color: '#6B6890' }}>
-                  深度分析
-                </Text>
-              </TouchableOpacity>
-              {/* Concise (精简) */}
-              <TouchableOpacity
-                onPress={() => setVerboseMode(false)}
-                className="flex-1 py-2.5 rounded-xl border items-center"
-                style={{
-                  backgroundColor: !verboseMode ? '#67E8F920' : 'rgba(30, 32, 60, 0.4)',
-                  borderColor: !verboseMode ? '#67E8F960' : 'rgba(167, 139, 250, 0.15)',
-                }}
-              >
-                <Text
-                  className="text-xs font-medium"
-                  style={{ color: !verboseMode ? '#67E8F9' : '#6B6890' }}
-                >
-                  精简解读
-                </Text>
-                <Text className="text-xs mt-0.5" style={{ color: '#6B6890' }}>
-                  引导对话
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text className="text-muted text-xs mt-2 leading-4">
-              {verboseMode
-                ? '提供完整深度的梦境分析，内容较长但更全面'
-                : '精炼核心要点，更短更聚焦，并引导你展开多轮对话深入探索'}
-            </Text>
-          </View>
 
           {/* Confirm button */}
           <TouchableOpacity
