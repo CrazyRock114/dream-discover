@@ -133,7 +133,7 @@ export default function RecordScreen() {
   };
 
   return (
-    <Screen safeAreaEdges={['left', 'right', 'bottom']}>
+    <Screen safeAreaEdges={['left', 'right']} backgroundColor="#0D1026">
       <Toast message={toast?.message || null} type={toast?.type || 'error'} onDismiss={dismissToast} />
 
       {/* Header */}

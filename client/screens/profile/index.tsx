@@ -6,7 +6,7 @@ import { Image } from 'expo-image';
 
 export default function ProfileScreen() {
   return (
-    <Screen safeAreaEdges={['left', 'right', 'bottom']}>
+    <Screen safeAreaEdges={['left', 'right']} backgroundColor="#0D1026">
       {/* Header */}
       <View
         className="px-6 pb-6"

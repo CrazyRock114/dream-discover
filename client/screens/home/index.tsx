@@ -208,7 +208,7 @@ export default function HomeScreen() {
   // Show a minimal loading indicator only on the very first load
   if (firstLoad) {
     return (
-      <Screen>
+      <Screen backgroundColor="#0D1026">
         <View className="flex-1 justify-center items-center">
           <ActivityIndicator size="large" color="#A78BFA" />
         </View>
@@ -217,7 +217,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <Screen safeAreaEdges={['left', 'right', 'bottom']}>
+    <Screen safeAreaEdges={['left', 'right']} backgroundColor="#0D1026">
       <Toast message={toast?.message || null} type={toast?.type || 'error'} onDismiss={dismissToast} />
 
       {/* Header */}
