@@ -402,15 +402,12 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
       return;
     }
 
-    // Update dream with interpreter and clear old interpretation
-    await client.from("dreams").update({ interpreter, interpretation: null }).eq("id", dream.id);
-
-    // Clear old messages for this dream (supports re-interpretation with a different interpreter)
-    await client.from("messages").delete().eq("dream_id", dream.id);
+    // Update dream with interpreter
+    await client.from("dreams").update({ interpreter }).eq("id", dream.id);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const conciseSuffix = isConcise
-      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在150字以内，只提炼1-2个最核心的解读要点，不展开长篇论证；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复同样保持精简，100字以内，逐步深入。"
+      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。"
       : "";
     const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
     const userMessage = `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;

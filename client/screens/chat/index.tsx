@@ -269,16 +269,20 @@ export default function ChatScreen() {
     }
   }, [isVoiceRecording, startVoiceRecording, stopVoiceRecording, showToast]);
 
-  /** Navigate to interpreter select to switch interpreter */
+  /** Navigate to interpreter select to switch interpreter — carries only dream content, creates new record */
   const handleSwitchInterpreter = useCallback(() => {
-    if (!dreamId) return;
+    if (!dream) return;
     if (isStreaming && sseCloseRef.current) {
       sseCloseRef.current();
       sseCloseRef.current = null;
       setIsStreaming(false);
     }
-    router.push('/interpreter-select', { dreamId });
-  }, [dreamId, isStreaming, router]);
+    // Pass dream content (not dreamId) so a new independent record is created
+    router.push('/interpreter-select', {
+      dreamContent: dream.content,
+      dreamMood: dream.mood || '',
+    });
+  }, [dream, isStreaming, router]);
 
   // Load dream and messages
   useEffect(() => {
