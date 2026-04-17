@@ -128,9 +128,10 @@ function connectSSE(
 
 export default function ChatScreen() {
   const router = useSafeRouter();
-  const params = useSafeSearchParams<{ dreamId: number; interpreter: string }>();
+  const params = useSafeSearchParams<{ dreamId: number; interpreter: string; mode: string }>();
   const dreamId = params.dreamId;
   const interpreterStr = params.interpreter || 'freud';
+  const modeStr = params.mode || 'verbose';
   const config = INTERPRETER_CONFIG[interpreterStr] || INTERPRETER_CONFIG.freud;
 
   const [dream, setDream] = useState<Dream | null>(null);
@@ -171,7 +172,7 @@ export default function ChatScreen() {
 
   // Start interpretation via SSE
   const startInterpretation = useCallback(
-    (dId: number, interp: string) => {
+    (dId: number, interp: string, mode: string) => {
       setIsStreaming(true);
       const assistantMsgId = `stream-${Date.now()}`;
       setMessages([
@@ -182,7 +183,7 @@ export default function ChatScreen() {
 
       const conn = connectSSE(
         url,
-        { interpreter: interp },
+        { interpreter: interp, mode },
         (data) => {
           handleSSEData(assistantMsgId, data);
         },
@@ -297,7 +298,7 @@ export default function ChatScreen() {
 
         // If no messages yet, start interpretation
         if (chatMsgs.length === 0) {
-          startInterpretation(dreamId, interpreterStr);
+          startInterpretation(dreamId, interpreterStr, modeStr);
         } else {
           setMessages(chatMsgs);
         }

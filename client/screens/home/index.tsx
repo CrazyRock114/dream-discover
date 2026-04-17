@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -132,26 +132,23 @@ function DreamCard({ dream, onPress, onDelete }: { dream: Dream; onPress: () => 
 export default function HomeScreen() {
   const router = useSafeRouter();
   const [dreams, setDreams] = useState<Dream[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [firstLoad, setFirstLoad] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [moodFilter, setMoodFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [showTagFilters, setShowTagFilters] = useState(false);
-  /** All unique tags from loaded dreams, for the filter bar */
-  const [allTags, setAllTags] = useState<string[]>([]);
+  const allTags = useRef<string[]>([]);
 
   const { toast, showToast, dismissToast } = useToast();
 
-  const loadDreams = useCallback(async (reset = true, mood?: string, tag?: string) => {
+  const loadDreams = useCallback(async (reset = true) => {
     try {
-      const effectiveMood = mood !== undefined ? mood : moodFilter;
-      const effectiveTag = tag !== undefined ? tag : tagFilter;
       const result = await fetchDreams(
         20,
         reset ? undefined : nextCursor || undefined,
-        effectiveMood || undefined,
-        effectiveTag || undefined,
+        moodFilter || undefined,
+        tagFilter || undefined,
       );
       if (reset) {
         setDreams(result.data);
@@ -168,19 +165,19 @@ export default function HomeScreen() {
             tagSet.add(t.tag);
           }
         }
-        setAllTags(Array.from(tagSet));
+        allTags.current = Array.from(tagSet);
       }
     } catch {
       showToast('加载梦境列表失败', 'error');
     } finally {
-      setLoading(false);
+      setFirstLoad(false);
       setRefreshing(false);
     }
   }, [nextCursor, moodFilter, tagFilter, showToast]);
 
+  // Silent refresh on focus — no full-screen spinner, just refresh data
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
       loadDreams(true);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [moodFilter, tagFilter])
@@ -208,7 +205,8 @@ export default function HomeScreen() {
     }
   };
 
-  if (loading) {
+  // Show a minimal loading indicator only on the very first load
+  if (firstLoad) {
     return (
       <Screen>
         <View className="flex-1 justify-center items-center">
@@ -311,7 +309,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             ))}
             {/* Custom tags from user's dreams */}
-            {allTags
+            {allTags.current
               .filter(t => !PRESET_TAG_FILTERS.includes(t))
               .map(tag => (
                 <TouchableOpacity
@@ -355,7 +353,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {dreams.length === 0 ? (
+        {dreams.length === 0 && !firstLoad ? (
           <View className="flex-1 justify-center items-center px-10">
             <View className="w-20 h-20 rounded-full bg-accent/10 items-center justify-center mb-5">
               <FontAwesome6 name="cloud-moon" size={32} color="#A78BFA" />

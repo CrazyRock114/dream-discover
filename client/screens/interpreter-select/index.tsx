@@ -4,7 +4,7 @@ import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { Image } from 'expo-image';
-import { fetchInterpreters, type Interpreter } from '@/utils/api';
+import { type Interpreter } from '@/utils/api';
 
 const INTERPRETER_DATA: Interpreter[] = [
   {
@@ -14,7 +14,7 @@ const INTERPRETER_DATA: Interpreter[] = [
     avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832',
     title: '精神分析学派创始人',
     tagline: '梦是通往潜意识的皇家大道',
-    description: '以精神分析理论解读你的梦境，揭示潜意识中被压抑的欲望与冲突。弗洛伊德会用他的愿望满足理论、审查机制与象征分析，深入你梦境的显意与隐意之间。',
+    description: '以精神分析理论解读你的梦境，揭示潜意识中被压抑的欲望与冲突。',
   },
   {
     id: 'zhougong',
@@ -23,7 +23,7 @@ const INTERPRETER_DATA: Interpreter[] = [
     avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4ad23d7a-5e1a-4f68-9530-16bf23fb6942.jpeg?sign=1807775797-faad9d4411-0-eab185f513ae76adac286fdce9d24e8c3773bc504796ef69ecc9ecb8c12cd1d6',
     title: '中华解梦始祖',
     tagline: '梦境皆有征兆，吉凶自有玄机',
-    description: '以《周公解梦》与千年易学智慧，为你揭示梦中的预兆与启示。周公会观梦之气象、辨阴阳之象、明吉凶之兆，不仅断吉凶，更指趋避之道。',
+    description: '以《周公解梦》与千年易学智慧，为你揭示梦中的预兆与启示。',
   },
 ];
 
@@ -31,20 +31,20 @@ export default function InterpreterSelectScreen() {
   const router = useSafeRouter();
   const { dreamId } = useSafeSearchParams<{ dreamId: number }>();
   const [selected, setSelected] = useState<string | null>(null);
+  const [verboseMode, setVerboseMode] = useState(true); // true = 详细, false = 精简
   const [loading, setLoading] = useState(false);
 
   const handleConfirm = useCallback(async () => {
     if (!selected || !dreamId) return;
     setLoading(true);
     try {
-      router.push('/chat', { dreamId, interpreter: selected });
+      router.push('/chat', { dreamId, interpreter: selected, mode: verboseMode ? 'verbose' : 'concise' });
     } catch (e) {
-      console.error('Failed to start interpretation:', e);
       Alert.alert('解梦失败', '无法启动解梦，请重试');
     } finally {
       setLoading(false);
     }
-  }, [selected, dreamId, router]);
+  }, [selected, dreamId, verboseMode, router]);
 
   return (
     <Screen safeAreaEdges={['left', 'right', 'bottom']}>
@@ -125,6 +125,64 @@ export default function InterpreterSelectScreen() {
             </TouchableOpacity>
           );
         })}
+
+        {/* Output length toggle */}
+        <View
+          className="mb-5 rounded-2xl border border-border/30 p-4"
+          style={{ backgroundColor: 'rgba(30, 32, 60, 0.6)' }}
+        >
+          <View className="flex-row items-center justify-between mb-2">
+            <View className="flex-row items-center gap-2">
+              <FontAwesome6 name="text-height" size={12} color="#A78BFA" />
+              <Text className="text-foreground text-sm font-medium">输出长度</Text>
+            </View>
+          </View>
+          <View className="flex-row gap-2">
+            {/* Verbose (详细) */}
+            <TouchableOpacity
+              onPress={() => setVerboseMode(true)}
+              className="flex-1 py-2.5 rounded-xl border items-center"
+              style={{
+                backgroundColor: verboseMode ? '#A78BFA20' : 'rgba(30, 32, 60, 0.4)',
+                borderColor: verboseMode ? '#A78BFA60' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              <Text
+                className="text-xs font-medium"
+                style={{ color: verboseMode ? '#A78BFA' : '#6B6890' }}
+              >
+                详细解读
+              </Text>
+              <Text className="text-xs mt-0.5" style={{ color: '#6B6890' }}>
+                深度分析
+              </Text>
+            </TouchableOpacity>
+            {/* Concise (精简) */}
+            <TouchableOpacity
+              onPress={() => setVerboseMode(false)}
+              className="flex-1 py-2.5 rounded-xl border items-center"
+              style={{
+                backgroundColor: !verboseMode ? '#67E8F920' : 'rgba(30, 32, 60, 0.4)',
+                borderColor: !verboseMode ? '#67E8F960' : 'rgba(167, 139, 250, 0.15)',
+              }}
+            >
+              <Text
+                className="text-xs font-medium"
+                style={{ color: !verboseMode ? '#67E8F9' : '#6B6890' }}
+              >
+                精简解读
+              </Text>
+              <Text className="text-xs mt-0.5" style={{ color: '#6B6890' }}>
+                引导对话
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text className="text-muted text-xs mt-2 leading-4">
+            {verboseMode
+              ? '提供完整深度的梦境分析，内容较长但更全面'
+              : '精炼核心要点，更短更聚焦，并引导你展开多轮对话深入探索'}
+          </Text>
+        </View>
 
         {/* Confirm button */}
         <TouchableOpacity

@@ -377,16 +377,17 @@ app.post("/api/v1/asr", async (req, res) => {
 
 /**
  * POST /api/v1/dreams/:id/interpret
- * Body: { interpreter: 'freud' | 'zhougong' }
+ * Body: { interpreter: 'freud' | 'zhougong', mode?: 'verbose' | 'concise' }
  * SSE streaming response
  */
 app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
   try {
-    const { interpreter } = req.body;
+    const { interpreter, mode } = req.body;
     if (!interpreter || !["freud", "zhougong"].includes(interpreter)) {
       res.status(400).json({ error: "请选择解梦师：freud 或 zhougong" });
       return;
     }
+    const isConcise = mode === "concise";
 
     const client = getClient();
     const { data: dream, error } = await client
@@ -408,6 +409,9 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     await client.from("messages").delete().eq("dream_id", dream.id);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
+    const conciseSuffix = isConcise
+      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在150字以内，只提炼1-2个最核心的解读要点，不展开长篇论证；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复同样保持精简，100字以内，逐步深入。"
+      : "";
     const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
     const userMessage = `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;
 
@@ -426,7 +430,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     let fullContent = "";
 
     const messages = [
-      { role: "system" as const, content: systemPrompt },
+      { role: "system" as const, content: systemPrompt + conciseSuffix },
       { role: "user" as const, content: userMessage },
     ];
 
