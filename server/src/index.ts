@@ -2,7 +2,9 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { getSupabaseClient } from "./storage/database/supabase-client.js";
-import { LLMClient, ASRClient, S3Storage, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { streamChat } from "./llm.js";
+import * as r2Storage from "./r2-storage.js";
+import { recognize as asrRecognize } from "./asr.js";
 import { FREUD_PROMPT, ZHOUGONG_PROMPT } from "./interpreters.js";
 
 const app = express();
@@ -19,21 +21,6 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 function getClient() {
   return getSupabaseClient();
 }
-
-// ─── LLM client ───
-function createLLMClient(headers?: Record<string, string>) {
-  const config = new Config();
-  return new LLMClient(config, headers);
-}
-
-// ─── Storage ───
-const storage = new S3Storage({
-  endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-  accessKey: "",
-  secretKey: "",
-  bucketName: process.env.COZE_BUCKET_NAME,
-  region: "cn-beijing",
-});
 
 // ─── Device ID middleware ───
 function getDeviceId(req: express.Request): string {
@@ -376,13 +363,13 @@ app.post("/api/v1/upload/audio", upload.single("file"), async (req, res) => {
     }
 
     const fileName = `dream-audio/${Date.now()}-${req.file.originalname || "recording.m4a"}`;
-    const key = await storage.uploadFile({
+    const key = await r2Storage.uploadFile({
       fileContent: req.file.buffer,
       fileName,
       contentType: req.file.mimetype || "audio/m4a",
     });
 
-    const url = await storage.generatePresignedUrl({ key, expireTime: 86400 });
+    const url = await r2Storage.generatePresignedUrl({ key, expireTime: 86400 });
     res.json({ key, url });
   } catch (err: any) {
     console.error("POST /upload/audio error:", err);
@@ -404,16 +391,8 @@ app.post("/api/v1/asr", async (req, res) => {
       return;
     }
 
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const asrClient = new ASRClient(new Config(), customHeaders);
-
-    // Generate signed URL for the audio file
-    const audioUrl = await storage.generatePresignedUrl({ key: audio_key, expireTime: 3600 });
-
-    const result = await asrClient.recognize({
-      uid: "dream-app",
-      url: audioUrl,
-    });
+    const reqHeaders = req.headers as Record<string, string>;
+    const result = await asrRecognize({ audio_key }, reqHeaders);
 
     res.json({ text: result.text });
   } catch (err: any) {
@@ -470,9 +449,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    // Call LLM with streaming
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const llmClient = createLLMClient(customHeaders);
+    // Call LLM with streaming (pass request headers for coze SDK fallback)
     let fullContent = "";
 
     const messages = [
@@ -480,13 +457,15 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
       { role: "user" as const, content: userMessage },
     ];
 
-    const stream = llmClient.stream(messages, { model: "doubao-seed-2-0-pro-260215" });
+    const reqHeaders = req.headers as Record<string, string>;
+    const stream = streamChat(messages, {
+      temperature: 0.85,
+    }, reqHeaders);
 
     for await (const chunk of stream) {
       if (chunk.content) {
-        const text = chunk.content.toString();
-        fullContent += text;
-        res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+        fullContent += chunk.content;
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
       }
     }
 
@@ -582,18 +561,18 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     // Add current message
     llmMessages.push({ role: "user", content: message.trim() });
 
-    // Call LLM with streaming
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as Record<string, string>);
-    const llmClient = createLLMClient(customHeaders);
+    // Call LLM with streaming (pass request headers for coze SDK fallback)
     let fullContent = "";
 
-    const stream = llmClient.stream(llmMessages, { model: "doubao-seed-2-0-pro-260215" });
+    const reqHeaders = req.headers as Record<string, string>;
+    const stream = streamChat(llmMessages, {
+      temperature: 0.85,
+    }, reqHeaders);
 
     for await (const chunk of stream) {
       if (chunk.content) {
-        const text = chunk.content.toString();
-        fullContent += text;
-        res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+        fullContent += chunk.content;
+        res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
       }
     }
 
