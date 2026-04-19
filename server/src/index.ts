@@ -6,6 +6,7 @@ import { streamChat } from "./llm.js";
 import * as r2Storage from "./r2-storage.js";
 import { recognize as asrRecognize } from "./asr.js";
 import { FREUD_PROMPT, ZHOUGONG_PROMPT } from "./interpreters.js";
+import { runMigration } from "./migrate.js";
 
 const app = express();
 const port = process.env.PORT || 9091;
@@ -28,8 +29,18 @@ function getDeviceId(req: express.Request): string {
 }
 
 // ─── Health ───
-app.get("/api/v1/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
+app.get("/api/v1/health", async (_req, res) => {
+  try {
+    const client = getClient();
+    const { error } = await client.from("dreamdis_dreams").select("id").limit(1);
+    if (error) {
+      res.status(503).json({ status: "degraded", error: error.message });
+      return;
+    }
+    res.status(200).json({ status: "ok" });
+  } catch {
+    res.status(503).json({ status: "error", error: "database unreachable" });
+  }
 });
 
 // ─── Dreams CRUD ───
@@ -617,6 +628,9 @@ app.get("/api/v1/interpreters", (_req, res) => {
   ]);
 });
 
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}/`);
+// Run migration then start server
+runMigration().then(() => {
+  app.listen(port, () => {
+    console.log(`Server listening at http://localhost:${port}/`);
+  });
 });
