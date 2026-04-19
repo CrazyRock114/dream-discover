@@ -1,13 +1,13 @@
 import { pgTable, serial, varchar, text, timestamp, integer, boolean, index } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
-export const healthCheck = pgTable("health_check", {
+export const healthCheck = pgTable("dreamdis_health_check", {
 	id: serial().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
 
 export const dreams = pgTable(
-	"dreams",
+	"dreamdis_dreams",
 	{
 		id: serial().primaryKey(),
 		device_id: varchar("device_id", { length: 64 }).notNull(),
@@ -19,15 +19,15 @@ export const dreams = pgTable(
 		created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 	},
 	(table) => [
-		index("dreams_created_at_idx").on(table.created_at),
-		index("dreams_interpreter_idx").on(table.interpreter),
-		index("dreams_device_id_idx").on(table.device_id),
-		index("dreams_mood_idx").on(table.mood),
+		index("dreamdis_dreams_created_at_idx").on(table.created_at),
+		index("dreamdis_dreams_interpreter_idx").on(table.interpreter),
+		index("dreamdis_dreams_device_id_idx").on(table.device_id),
+		index("dreamdis_dreams_mood_idx").on(table.mood),
 	]
 );
 
 export const dream_tags = pgTable(
-	"dream_tags",
+	"dreamdis_dream_tags",
 	{
 		id: serial().primaryKey(),
 		dream_id: integer("dream_id").notNull().references(() => dreams.id, { onDelete: "cascade" }),
@@ -36,12 +36,12 @@ export const dream_tags = pgTable(
 		created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 	},
 	(table) => [
-		index("dream_tags_dream_id_idx").on(table.dream_id),
+		index("dreamdis_dream_tags_dream_id_idx").on(table.dream_id),
 	]
 );
 
 export const messages = pgTable(
-	"messages",
+	"dreamdis_messages",
 	{
 		id: serial().primaryKey(),
 		dream_id: integer("dream_id").notNull().references(() => dreams.id, { onDelete: "cascade" }),
@@ -50,6 +50,6 @@ export const messages = pgTable(
 		created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 	},
 	(table) => [
-		index("messages_dream_id_idx").on(table.dream_id),
+		index("dreamdis_messages_dream_id_idx").on(table.dream_id),
 	]
 );

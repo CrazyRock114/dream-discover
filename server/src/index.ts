@@ -54,7 +54,7 @@ app.get("/api/v1/dreams", async (req, res) => {
     const tag = req.query.tag as string | undefined;
 
     let query = client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .eq("device_id", deviceId)
       .order("created_at", { ascending: false })
@@ -78,7 +78,7 @@ app.get("/api/v1/dreams", async (req, res) => {
     if (tag && items.length > 0) {
       const dreamIds = items.map(d => d.id);
       const { data: tagData } = await client
-        .from("dream_tags")
+        .from("dreamdis_dream_tags")
         .select("dream_id")
         .in("dream_id", dreamIds)
         .eq("tag", tag);
@@ -91,7 +91,7 @@ app.get("/api/v1/dreams", async (req, res) => {
     if (items.length > 0) {
       const dreamIds = items.map(d => d.id);
       const { data: allTags } = await client
-        .from("dream_tags")
+        .from("dreamdis_dream_tags")
         .select("id, dream_id, tag, is_custom")
         .in("dream_id", dreamIds);
 
@@ -141,7 +141,7 @@ app.post("/api/v1/dreams", async (req, res) => {
     }
 
     const { data, error } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .insert({
         content: content.trim(),
         device_id: deviceId,
@@ -164,12 +164,12 @@ app.post("/api/v1/dreams", async (req, res) => {
         tag,
         is_custom: !presetTags.includes(tag),
       }));
-      await client.from("dream_tags").insert(tagRows);
+      await client.from("dreamdis_dream_tags").insert(tagRows);
     }
 
     // Re-fetch with tags
     const { data: tagData } = await client
-      .from("dream_tags")
+      .from("dreamdis_dream_tags")
       .select("id, tag, is_custom")
       .eq("dream_id", data.id);
 
@@ -202,7 +202,7 @@ app.get("/api/v1/dreams/find", async (req, res) => {
 
     const client = getClient();
     const { data, error } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .eq("device_id", deviceId)
       .eq("content", content.trim())
@@ -216,7 +216,7 @@ app.get("/api/v1/dreams/find", async (req, res) => {
     // Fetch tags if found
     if (data) {
       const { data: tagData } = await client
-        .from("dream_tags")
+        .from("dreamdis_dream_tags")
         .select("id, tag, is_custom")
         .eq("dream_id", data.id);
       res.json({ ...data, tags: tagData || [] });
@@ -236,7 +236,7 @@ app.get("/api/v1/dreams/:id", async (req, res) => {
   try {
     const client = getClient();
     const { data, error } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
       .eq("id", Number(req.params.id))
       .maybeSingle();
@@ -249,7 +249,7 @@ app.get("/api/v1/dreams/:id", async (req, res) => {
 
     // Fetch tags
     const { data: tagData } = await client
-      .from("dream_tags")
+      .from("dreamdis_dream_tags")
       .select("id, tag, is_custom")
       .eq("dream_id", data.id);
 
@@ -273,7 +273,7 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
     if (req.body.mood !== undefined) updates.mood = req.body.mood;
 
     const { data, error } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .update(updates)
       .eq("id", Number(req.params.id))
       .select("id, device_id, content, audio_key, interpreter, interpretation, mood, created_at")
@@ -285,7 +285,7 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
     if (req.body.tags !== undefined) {
       const dreamId = Number(req.params.id);
       // Delete existing tags
-      await client.from("dream_tags").delete().eq("dream_id", dreamId);
+      await client.from("dreamdis_dream_tags").delete().eq("dream_id", dreamId);
 
       // Insert new tags
       if (Array.isArray(req.body.tags) && req.body.tags.length > 0) {
@@ -295,13 +295,13 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
           tag,
           is_custom: !presetTags.includes(tag),
         }));
-        await client.from("dream_tags").insert(tagRows);
+        await client.from("dreamdis_dream_tags").insert(tagRows);
       }
     }
 
     // Re-fetch tags
     const { data: tagData } = await client
-      .from("dream_tags")
+      .from("dreamdis_dream_tags")
       .select("id, tag, is_custom")
       .eq("dream_id", Number(req.params.id));
 
@@ -318,7 +318,7 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
 app.delete("/api/v1/dreams/:id", async (req, res) => {
   try {
     const client = getClient();
-    const { error } = await client.from("dreams").delete().eq("id", Number(req.params.id));
+    const { error } = await client.from("dreamdis_dreams").delete().eq("id", Number(req.params.id));
     if (error) throw new Error(`删除失败: ${error.message}`);
     res.json({ success: true });
   } catch (err: any) {
@@ -336,7 +336,7 @@ app.get("/api/v1/dreams/:id/messages", async (req, res) => {
   try {
     const client = getClient();
     const { data, error } = await client
-      .from("messages")
+      .from("dreamdis_messages")
       .select("id, dream_id, role, content, created_at")
       .eq("dream_id", Number(req.params.id))
       .order("created_at", { ascending: true });
@@ -419,7 +419,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
 
     const client = getClient();
     const { data: dream, error } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .select("id, content, mood")
       .eq("id", Number(req.params.id))
       .maybeSingle();
@@ -431,7 +431,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     }
 
     // Update dream with interpreter
-    await client.from("dreams").update({ interpreter }).eq("id", dream.id);
+    await client.from("dreamdis_dreams").update({ interpreter }).eq("id", dream.id);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const conciseSuffix = isConcise
@@ -441,7 +441,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     const userMessage = `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;
 
     // Save user message
-    await client.from("messages").insert({ dream_id: dream.id, role: "user", content: userMessage });
+    await client.from("dreamdis_messages").insert({ dream_id: dream.id, role: "user", content: userMessage });
 
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -472,8 +472,8 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     res.write("data: [DONE]\n\n");
 
     // Save assistant message and update dream interpretation
-    await client.from("messages").insert({ dream_id: dream.id, role: "assistant", content: fullContent });
-    await client.from("dreams").update({ interpretation: fullContent, interpreter }).eq("id", dream.id);
+    await client.from("dreamdis_messages").insert({ dream_id: dream.id, role: "assistant", content: fullContent });
+    await client.from("dreamdis_dreams").update({ interpretation: fullContent, interpreter }).eq("id", dream.id);
 
     res.end();
   } catch (err: any) {
@@ -509,7 +509,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
 
     const client = getClient();
     const { data: dream, error: dreamError } = await client
-      .from("dreams")
+      .from("dreamdis_dreams")
       .select("id, content")
       .eq("id", Number(req.params.id))
       .maybeSingle();
@@ -522,7 +522,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
 
     // Get conversation history
     const { data: history, error: histError } = await client
-      .from("messages")
+      .from("dreamdis_messages")
       .select("role, content")
       .eq("dream_id", dream.id)
       .order("created_at", { ascending: true });
@@ -530,7 +530,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     if (histError) throw new Error(`查询历史失败: ${histError.message}`);
 
     // Save user message
-    await client.from("messages").insert({ dream_id: dream.id, role: "user", content: message.trim() });
+    await client.from("dreamdis_messages").insert({ dream_id: dream.id, role: "user", content: message.trim() });
 
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -579,7 +579,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     res.write("data: [DONE]\n\n");
 
     // Save assistant message
-    await client.from("messages").insert({ dream_id: dream.id, role: "assistant", content: fullContent });
+    await client.from("dreamdis_messages").insert({ dream_id: dream.id, role: "assistant", content: fullContent });
 
     res.end();
   } catch (err: any) {
