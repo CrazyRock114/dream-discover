@@ -5,24 +5,17 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm
 
-# Copy workspace root files
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Copy entire project (simpler than selective COPY for monorepo)
+COPY . .
 
-# Copy patches directory (required by pnpm --frozen-lockfile)
-COPY patches/ ./patches/
-
-# Copy all workspace package.json files (pnpm needs them for workspace resolution)
-COPY server/package.json ./server/
-COPY client/package.json ./client/
-
-# Install dependencies (server only, but pnpm needs all workspace package.json for resolution)
-RUN pnpm install --frozen-lockfile --filter=server...
-
-# Copy server source code
-COPY server/ ./server/
+# Install dependencies
+RUN pnpm install --frozen-lockfile
 
 # Build server TypeScript
 RUN cd server && pnpm run build
+
+# Remove client dependencies to reduce image size
+RUN rm -rf client/node_modules
 
 # Expose port (Railway will override with PORT env var)
 EXPOSE 9091
