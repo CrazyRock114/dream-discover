@@ -29,18 +29,8 @@ function getDeviceId(req: express.Request): string {
 }
 
 // ─── Health ───
-app.get("/api/v1/health", async (_req, res) => {
-  try {
-    const client = getClient();
-    const { error } = await client.from("dreamdis_dreams").select("id").limit(1);
-    if (error) {
-      res.status(503).json({ status: "degraded", error: error.message });
-      return;
-    }
-    res.status(200).json({ status: "ok" });
-  } catch {
-    res.status(503).json({ status: "error", error: "database unreachable" });
-  }
+app.get("/api/v1/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
 });
 
 // ─── Dreams CRUD ───

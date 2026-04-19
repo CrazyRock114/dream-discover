@@ -1,18 +1,17 @@
 FROM node:20-slim
 
-# Force cache bust
-ARG BUILD_DATE=unknown
-LABEL build_date=$BUILD_DATE
+# Force cache bust - increment this value to invalidate Docker build cache
+ARG CACHE_BUST=2
 
 WORKDIR /app
 
 # Install pnpm
 RUN npm install -g pnpm
 
-# Copy entire project
+# Copy entire project (patches directory is needed by pnpm-lock.yaml)
 COPY . .
 
-# Install dependencies
+# Install all dependencies (frozen lockfile requires patches/)
 RUN pnpm install --frozen-lockfile
 
 # Build server TypeScript
@@ -20,9 +19,6 @@ RUN cd server && pnpm run build
 
 # Remove client node_modules to reduce image size
 RUN rm -rf client/node_modules
-
-# Expose port
-EXPOSE 9091
 
 WORKDIR /app/server
 
