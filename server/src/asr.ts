@@ -100,9 +100,7 @@ export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "
       file,
       language: "zh",
       response_format: "verbose_json",
-      // 减少幻觉：不基于前文生成，避免静音段产生常见文本
-      condition_on_previous_text: false,
-      // 提供初始 prompt 引导模型产出正常对话内容，而非幻觉文本
+      // 提供初始 prompt 引导模型产出正常对话内容，减少幻觉
       prompt: "以下是中文语音转文字内容：",
       // 限制温度降低幻觉概率
       temperature: 0.0,
