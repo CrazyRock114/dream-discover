@@ -29,8 +29,8 @@ export async function getDb(): Promise<ReturnType<typeof postgres>> {
     if (!dbUrl) {
       throw new Error("DATABASE_URL is not set");
     }
-    const needSsl = dbUrl.includes("sslmode=require");
-    console.log("[db] Connecting to database, sslmode=require:", needSsl);
+    const needSsl = dbUrl.includes("sslmode=require") || dbUrl.includes("supabase.com") || dbUrl.includes("pooler.supabase.com");
+    console.log("[db] Connecting to database, ssl:", needSsl);
 
     // 解析主机名为 IPv4 地址（Railway 不支持 IPv6 出站）
     const { url: resolvedUrl, originalHost } = await resolveToIPv4(dbUrl);
