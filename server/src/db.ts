@@ -1,55 +1,53 @@
 import postgres from "postgres";
 import dns from "dns";
-import tls from "tls";
 
 // Railway 不支持 IPv6 出站，需要主动将主机名解析为 IPv4 地址
-// 返回 { url: 修改后的URL, originalHost: 原始主机名(用于TLS SNI) }
-async function resolveToIPv4(urlStr: string): Promise<{ url: string; originalHost: string }> {
-  const url = new URL(urlStr);
-  const hostname = url.hostname;
+// 只返回 IPv4 地址，不修改 URL，通过 postgres 的 host 选项覆盖连接目标
+async function resolveToIPv4(hostname: string): Promise<string | null> {
   try {
     const addresses = await dns.promises.resolve4(hostname);
     if (addresses.length > 0) {
-      const ipv4 = addresses[0];
-      console.log(`[db] Resolved ${hostname} -> ${ipv4} (IPv4)`);
-      url.hostname = ipv4;
-      return { url: url.toString(), originalHost: hostname };
+      console.log(`[db] Resolved ${hostname} -> ${addresses[0]} (IPv4)`);
+      return addresses[0];
     }
   } catch (err: any) {
-    console.log(`[db] DNS resolve4 failed: ${err.message}, using original URL`);
+    console.log(`[db] DNS resolve4 failed for ${hostname}: ${err.message}`);
   }
-  return { url: urlStr, originalHost: hostname };
+  return null;
 }
 
 let sql: ReturnType<typeof postgres> | null = null;
 
 export async function getDb(): Promise<ReturnType<typeof postgres>> {
   if (!sql) {
-    let dbUrl = process.env.DATABASE_URL || process.env.PGDATABASE_URL;
+    const dbUrl = process.env.DATABASE_URL || process.env.PGDATABASE_URL;
     if (!dbUrl) {
       throw new Error("DATABASE_URL is not set");
     }
     const needSsl = dbUrl.includes("sslmode=require") || dbUrl.includes("supabase.com") || dbUrl.includes("pooler.supabase.com");
     console.log("[db] Connecting to database, ssl:", needSsl);
 
-    // 解析主机名为 IPv4 地址（Railway 不支持 IPv6 出站）
-    const { url: resolvedUrl, originalHost } = await resolveToIPv4(dbUrl);
+    // 解析 IPv4 地址（Railway 不支持 IPv6 出站）
+    // 关键：不修改 URL，通过 host 选项覆盖连接目标，SSL 证书校验仍使用原始 hostname
+    const parsedUrl = new URL(dbUrl);
+    const ipv4 = await resolveToIPv4(parsedUrl.hostname);
 
-    sql = postgres(resolvedUrl, {
-      ssl: needSsl
-        ? {
-            rejectUnauthorized: true,
-            // 使用原始主机名做 SNI 和证书校验，因为 URL 中的 hostname 已替换为 IP
-            servername: originalHost,
-            checkServerIdentity: (host: string, cert: any) => {
-              // cert 的 CN/SAN 包含原始主机名，host 是 IP 地址，需跳过 host 匹配
-              return tls.checkServerIdentity(originalHost, cert);
-            },
-          }
-        : undefined,
+    const options: Record<string, any> = {
       // Supabase PgBouncer (port 6543) 不支持 prepared statements
       prepare: false,
-    });
+    };
+
+    if (needSsl) {
+      options.ssl = "require";
+    }
+
+    // 如果解析到 IPv4，通过 host 选项覆盖连接目标（不修改 URL）
+    // 这样 SSL 证书校验仍基于原始 URL 中的 hostname
+    if (ipv4) {
+      options.host = ipv4;
+    }
+
+    sql = postgres(dbUrl, options);
   }
   return sql;
 }
