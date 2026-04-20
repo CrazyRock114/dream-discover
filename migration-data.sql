@@ -175,12 +175,10 @@ INSERT INTO dreamdis_messages (id, dream_id, role, content, created_at) VALUES
 (79, 37, 'assistant', '（点燃雪茄，沉思片刻）飞到太空...多么典型的象征。让我们先不要被表面的"科技进步"或"冒险精神"所迷惑。在梦中，向上飞行的意象几乎总是与某种脱离、逃避或升华的愿望有关。\n\n告诉我，在梦中你是什么感觉？是兴奋还是恐惧？是独自一人还是有人陪伴？这些细节至关重要。因为梦的显意——飞到太空——只是冰山一角，我们需要潜入水面之下，寻找那被压抑的隐意。\n\n（停顿，等待回答后继续）根据我的临床经验，太空梦往往与两种深层动力相关：一是对现实束缚的强烈反抗愿望，二是对回归子宫般安全状态的渴望——这看似矛盾，但在潜意识中完全可以并存。太空的虚无与黑暗，可以象征母亲的子宫；而飞向太空的动作，则可能表达着逃离某种压抑环境的愿望。\n\n你是否在现实生活中感到某种窒息？某种被束缚的感觉？或者...（意味深长地停顿）是否在逃避某种亲密关系中的冲突？', '2026-04-19 19:56:56.316578+00');
 
 -- 8. 重置序列（确保后续插入不会与已有数据冲突）
--- dreams 使用 dreams_id_seq，最大 id = 37
-SELECT setval('dreams_id_seq', 37, true);
--- dream_tags 使用 dream_tags_id_seq，最大 id = 10
-SELECT setval('dream_tags_id_seq', 10, true);
--- messages 使用 messages_id_seq，最大 id = 79
-SELECT setval('messages_id_seq', 79, true);
+-- 序列名格式为 {表名}_{列名}_seq，表名带 dreamdis_ 前缀
+SELECT setval('dreamdis_dreams_id_seq', 37, true);
+SELECT setval('dreamdis_dream_tags_id_seq', 10, true);
+SELECT setval('dreamdis_messages_id_seq', 79, true);
 
 -- 9. 通知 PostgREST 刷新 schema cache
 NOTIFY pgrst, 'reload schema';
