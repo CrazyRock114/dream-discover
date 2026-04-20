@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback } from 'react';
 import { Audio } from 'expo-av';
-import { uploadAudio, transcribeAudio } from '@/utils/api';
+import { transcribeAudioDirect } from '@/utils/api';
 
-type VoiceState = 'idle' | 'recording' | 'uploading' | 'transcribing';
+type VoiceState = 'idle' | 'recording' | 'transcribing';
 
 /**
  * 可复用的语音录入 Hook
- * 支持录音 → 上传 → ASR 转文字完整流程
+ * 支持录音 → ASR 转文字完整流程
  * 空内容时返回空字符串，由调用方决定如何提示
  */
 export function useVoiceInput() {
@@ -67,13 +67,9 @@ export function useVoiceInput() {
         return { success: false, text: '', error: '录音文件获取失败' };
       }
 
-      setVoiceState('uploading');
-
-      const uploadResult = await uploadAudio(uri, 'audio/m4a');
-
       setVoiceState('transcribing');
 
-      const asrResult = await transcribeAudio(uploadResult.key);
+      const asrResult = await transcribeAudioDirect(uri, 'audio/m4a');
 
       setVoiceState('idle');
       setRecordingDuration(0);
@@ -106,7 +102,7 @@ export function useVoiceInput() {
   }, []);
 
   const isRecording = voiceState === 'recording';
-  const isProcessing = voiceState === 'uploading' || voiceState === 'transcribing';
+  const isProcessing = voiceState === 'transcribing';
   const isActive = voiceState !== 'idle';
 
   return {

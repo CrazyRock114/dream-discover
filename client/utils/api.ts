@@ -189,8 +189,36 @@ export async function uploadAudio(fileUri: string, mimeType: string): Promise<{ 
 
 /**
  * 服务端文件：server/src/index.ts
+ * 接口：POST /api/v1/asr/transcribe
+ * FormData: file: audio blob
+ * 直接转录音频，无需先上传到 R2 存储
+ */
+export async function transcribeAudioDirect(fileUri: string, mimeType: string): Promise<{ text: string }> {
+  const formData = new FormData();
+  const filename = fileUri.split('/').pop() || 'recording.m4a';
+  const file = await createFormDataFile(fileUri, filename, mimeType);
+  formData.append('file', file as any);
+
+  const headers = await getHeaders();
+  delete headers['Content-Type']; // Let FormData set its own Content-Type
+
+  const res = await fetch(`${BASE_URL}/api/v1/asr/transcribe`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || '语音转文字失败');
+  }
+  return res.json();
+}
+
+/**
+ * 服务端文件：server/src/index.ts
  * 接口：POST /api/v1/asr
  * Body 参数：audio_key: string
+ * @deprecated 使用 transcribeAudioDirect 代替，无需先上传到 R2
  */
 export async function transcribeAudio(audio_key: string): Promise<{ text: string }> {
   const headers = await getHeaders();

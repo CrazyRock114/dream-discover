@@ -203,7 +203,7 @@ export default function RecordScreen() {
               <View className="flex-row items-center gap-2 mb-4">
                 <ActivityIndicator size="small" color="#A78BFA" />
                 <Text className="text-muted text-sm">
-                  {isProcessing ? '识别中...' : '上传中...'}
+                  识别中...
                 </Text>
               </View>
             )}

@@ -3,7 +3,7 @@ import cors from "cors";
 import multer from "multer";
 import { streamChat } from "./llm.js";
 import * as r2Storage from "./r2-storage.js";
-import { recognize as asrRecognize } from "./asr.js";
+import { recognize as asrRecognize, transcribeBuffer } from "./asr.js";
 import { FREUD_PROMPT, ZHOUGONG_PROMPT } from "./interpreters.js";
 import { runMigration } from "./migrate.js";
 import * as db from "./db.js";
@@ -329,6 +329,31 @@ app.post("/api/v1/asr", async (req, res) => {
     res.json({ text: result.text });
   } catch (err: any) {
     console.error("POST /asr error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/asr/transcribe
+ * FormData: file = audio blob
+ * 直接转录音频，无需 R2 存储（推荐用于外部部署）
+ */
+app.post("/api/v1/asr/transcribe", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: "请上传音频文件" });
+      return;
+    }
+
+    const audioBuffer = req.file.buffer;
+    const fileName = req.file.originalname || "audio.m4a";
+    const mimeType = req.file.mimetype || "audio/m4a";
+
+    const result = await transcribeBuffer(audioBuffer, fileName, mimeType);
+
+    res.json({ text: result.text });
+  } catch (err: any) {
+    console.error("POST /asr/transcribe error:", err);
     res.status(500).json({ error: err.message });
   }
 });
