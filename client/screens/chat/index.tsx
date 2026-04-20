@@ -350,23 +350,25 @@ export default function ChatScreen() {
 
       if (isUser) {
         return (
-          <View className="mb-4 items-end">
+          <View className="mb-4 items-end" style={{ maxWidth: '100%' }}>
             <View
-              className="rounded-2xl rounded-tr-sm px-4 py-3 max-w-[80%]"
-              style={{ backgroundColor: '#A78BFA' }}
+              className="rounded-2xl rounded-tr-sm px-4 py-3"
+              style={{ backgroundColor: '#A78BFA', maxWidth: '80%' }}
             >
-              <Text className="text-white text-sm leading-6">{item.content}</Text>
+              <Text className="text-white text-sm leading-6" style={{ flexShrink: 1 } as any}>
+                {item.content}
+              </Text>
             </View>
           </View>
         );
       }
 
       return (
-        <View className="mb-4 items-start">
-          <View className="flex-row items-start gap-3 max-w-[85%]">
+        <View className="mb-4 items-start" style={{ maxWidth: '100%' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, maxWidth: '85%' }}>
             <Image
               source={{ uri: config.avatar }}
-              style={{ width: 32, height: 32, borderRadius: 16 }}
+              style={{ width: 32, height: 32, borderRadius: 16, flexShrink: 0 }}
               contentFit="cover"
             />
             <View
@@ -375,6 +377,8 @@ export default function ChatScreen() {
                 backgroundColor: 'rgba(30, 32, 60, 0.9)',
                 borderColor: config.color + '30',
                 borderWidth: 1,
+                flexShrink: 1,
+                minWidth: 0,
               }}
             >
               {item.streaming && !item.content ? (
@@ -385,7 +389,7 @@ export default function ChatScreen() {
                   <Text className="text-muted text-xs ml-2">正在思考...</Text>
                 </View>
               ) : (
-                <Text className="text-foreground text-sm leading-6" selectable>
+                <Text className="text-foreground text-sm leading-6" selectable style={{ flexShrink: 1 } as any}>
                   {item.content}
                 </Text>
               )}
@@ -455,7 +459,7 @@ export default function ChatScreen() {
 
       {/* Messages */}
       <KeyboardAvoidingView
-        className="flex-1"
+        style={{ flex: 1, overflow: 'hidden' }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <FlatList
@@ -463,7 +467,8 @@ export default function ChatScreen() {
           data={messages}
           keyExtractor={item => item.id}
           renderItem={renderMessage}
-          contentContainerStyle={{ padding: 20, paddingBottom: 10 }}
+          contentContainerStyle={{ padding: 20, paddingBottom: 10, flexGrow: 1 }}
+          style={{ flex: 1, minHeight: 0 }}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View className="items-center py-10">

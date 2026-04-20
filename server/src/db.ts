@@ -53,59 +53,43 @@ export async function findDreamsByDeviceId(opts: {
   mood?: string;
 }): Promise<DreamRow[]> {
   const db = getDb();
-  let query = db`
-    SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-    FROM dreamdis_dreams
-    WHERE device_id = ${opts.deviceId}
-  `;
-  if (opts.mood) {
-    query = db`
-      SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-      FROM dreamdis_dreams
-      WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood}
-    `;
-  }
 
-  // Add cursor and ordering
   if (opts.cursor) {
     if (opts.mood) {
-      query = db`
+      return db`
         SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
         FROM dreamdis_dreams
         WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood} AND created_at < ${opts.cursor}
         ORDER BY created_at DESC
         LIMIT ${opts.limit + 1}
-      `;
-    } else {
-      query = db`
-        SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-        FROM dreamdis_dreams
-        WHERE device_id = ${opts.deviceId} AND created_at < ${opts.cursor}
-        ORDER BY created_at DESC
-        LIMIT ${opts.limit + 1}
-      `;
+      ` as unknown as Promise<DreamRow[]>;
     }
-  } else {
-    if (opts.mood) {
-      query = db`
-        SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-        FROM dreamdis_dreams
-        WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood}
-        ORDER BY created_at DESC
-        LIMIT ${opts.limit + 1}
-      `;
-    } else {
-      query = db`
-        SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-        FROM dreamdis_dreams
-        WHERE device_id = ${opts.deviceId}
-        ORDER BY created_at DESC
-        LIMIT ${opts.limit + 1}
-      `;
-    }
+    return db`
+      SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+      FROM dreamdis_dreams
+      WHERE device_id = ${opts.deviceId} AND created_at < ${opts.cursor}
+      ORDER BY created_at DESC
+      LIMIT ${opts.limit + 1}
+    ` as unknown as Promise<DreamRow[]>;
   }
 
-  return query as Promise<DreamRow[]>;
+  if (opts.mood) {
+    return db`
+      SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+      FROM dreamdis_dreams
+      WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood}
+      ORDER BY created_at DESC
+      LIMIT ${opts.limit + 1}
+    ` as unknown as Promise<DreamRow[]>;
+  }
+
+  return db`
+    SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+    FROM dreamdis_dreams
+    WHERE device_id = ${opts.deviceId}
+    ORDER BY created_at DESC
+    LIMIT ${opts.limit + 1}
+  ` as unknown as Promise<DreamRow[]>;
 }
 
 export async function findDreamsByTag(dreamIds: number[], tag: string): Promise<number[]> {
@@ -125,7 +109,7 @@ export async function findTagsByDreamIds(dreamIds: number[]): Promise<DreamTagRo
     SELECT id, dream_id, tag, is_custom
     FROM dreamdis_dream_tags
     WHERE dream_id = ANY(${dreamIds})
-  ` as Promise<DreamTagRow[]>;
+  ` as unknown as Promise<DreamTagRow[]>;
 }
 
 export async function insertDream(data: {
@@ -141,7 +125,7 @@ export async function insertDream(data: {
     VALUES (${data.device_id}, ${data.content}, ${data.interpreter || null}, ${data.audio_key || null}, ${data.mood || null})
     RETURNING id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
   `;
-  return rows[0] as DreamRow;
+  return rows[0] as unknown as DreamRow;
 }
 
 export async function findDreamById(id: number): Promise<DreamRow | null> {
@@ -150,7 +134,7 @@ export async function findDreamById(id: number): Promise<DreamRow | null> {
     SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams WHERE id = ${id}
   `;
-  return (rows[0] as DreamRow) || null;
+  return (rows[0] as unknown as DreamRow) || null;
 }
 
 export async function findDreamByContent(opts: {
@@ -165,7 +149,7 @@ export async function findDreamByContent(opts: {
     WHERE device_id = ${opts.deviceId} AND content = ${opts.content} AND interpreter = ${opts.interpreter}
     ORDER BY created_at DESC LIMIT 1
   `;
-  return (rows[0] as DreamRow) || null;
+  return (rows[0] as unknown as DreamRow) || null;
 }
 
 export async function updateDream(id: number, updates: Record<string, any>): Promise<DreamRow | null> {
@@ -185,7 +169,7 @@ export async function updateDream(id: number, updates: Record<string, any>): Pro
   values.push(id);
   const query = `UPDATE dreamdis_dreams SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING id, device_id, content, audio_key, interpreter, interpretation, mood, created_at`;
   const rows = await db.unsafe(query, values);
-  return (rows[0] as DreamRow) || null;
+  return (rows[0] as unknown as DreamRow) || null;
 }
 
 export async function deleteDream(id: number): Promise<boolean> {
@@ -217,7 +201,7 @@ export async function findMessagesByDreamId(dreamId: number): Promise<MessageRow
     FROM dreamdis_messages
     WHERE dream_id = ${dreamId}
     ORDER BY created_at ASC
-  ` as Promise<MessageRow[]>;
+  ` as unknown as Promise<MessageRow[]>;
 }
 
 export async function insertMessage(data: {
