@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 # Force cache bust - increment this value to invalidate Docker build cache
-ARG CACHE_BUST=6
+ARG CACHE_BUST=7
 
 WORKDIR /app
 
@@ -22,4 +22,4 @@ RUN rm -rf client/node_modules
 
 WORKDIR /app/server
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "--dns-result-order=ipv4first", "dist/index.js"]
