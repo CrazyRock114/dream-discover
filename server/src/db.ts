@@ -1,20 +1,52 @@
 import postgres from "postgres";
 import dns from "dns";
+import tls from "tls";
 
-// Railway 不支持 IPv6 出站，强制 DNS 优先解析 IPv4
-dns.setDefaultResultOrder("ipv4first");
+// Railway 不支持 IPv6 出站，需要主动将主机名解析为 IPv4 地址
+// 返回 { url: 修改后的URL, originalHost: 原始主机名(用于TLS SNI) }
+async function resolveToIPv4(urlStr: string): Promise<{ url: string; originalHost: string }> {
+  const url = new URL(urlStr);
+  const hostname = url.hostname;
+  try {
+    const addresses = await dns.promises.resolve4(hostname);
+    if (addresses.length > 0) {
+      const ipv4 = addresses[0];
+      console.log(`[db] Resolved ${hostname} -> ${ipv4} (IPv4)`);
+      url.hostname = ipv4;
+      return { url: url.toString(), originalHost: hostname };
+    }
+  } catch (err: any) {
+    console.log(`[db] DNS resolve4 failed: ${err.message}, using original URL`);
+  }
+  return { url: urlStr, originalHost: hostname };
+}
 
 let sql: ReturnType<typeof postgres> | null = null;
 
-export function getDb(): ReturnType<typeof postgres> {
+export async function getDb(): Promise<ReturnType<typeof postgres>> {
   if (!sql) {
-    const dbUrl = process.env.DATABASE_URL || process.env.PGDATABASE_URL;
+    let dbUrl = process.env.DATABASE_URL || process.env.PGDATABASE_URL;
     if (!dbUrl) {
       throw new Error("DATABASE_URL is not set");
     }
-    console.log("[db] Connecting to database, sslmode=require:", dbUrl.includes("sslmode=require"));
-    sql = postgres(dbUrl, {
-      ssl: dbUrl.includes("sslmode=require") ? "require" : undefined,
+    const needSsl = dbUrl.includes("sslmode=require");
+    console.log("[db] Connecting to database, sslmode=require:", needSsl);
+
+    // 解析主机名为 IPv4 地址（Railway 不支持 IPv6 出站）
+    const { url: resolvedUrl, originalHost } = await resolveToIPv4(dbUrl);
+
+    sql = postgres(resolvedUrl, {
+      ssl: needSsl
+        ? {
+            rejectUnauthorized: true,
+            // 使用原始主机名做 SNI 和证书校验，因为 URL 中的 hostname 已替换为 IP
+            servername: originalHost,
+            checkServerIdentity: (host: string, cert: any) => {
+              // cert 的 CN/SAN 包含原始主机名，host 是 IP 地址，需跳过 host 匹配
+              return tls.checkServerIdentity(originalHost, cert);
+            },
+          }
+        : undefined,
       // Supabase PgBouncer (port 6543) 不支持 prepared statements
       prepare: false,
     });
@@ -59,7 +91,7 @@ export async function findDreamsByDeviceId(opts: {
   cursor?: string;
   mood?: string;
 }): Promise<DreamRow[]> {
-  const db = getDb();
+  const db = await getDb();
 
   if (opts.cursor) {
     if (opts.mood) {
@@ -101,7 +133,7 @@ export async function findDreamsByDeviceId(opts: {
 
 export async function findDreamsByTag(dreamIds: number[], tag: string): Promise<number[]> {
   if (dreamIds.length === 0) return [];
-  const db = getDb();
+  const db = await getDb();
   const rows = await db`
     SELECT dream_id FROM dreamdis_dream_tags
     WHERE dream_id = ANY(${dreamIds}) AND tag = ${tag}
@@ -111,7 +143,7 @@ export async function findDreamsByTag(dreamIds: number[], tag: string): Promise<
 
 export async function findTagsByDreamIds(dreamIds: number[]): Promise<DreamTagRow[]> {
   if (dreamIds.length === 0) return [];
-  const db = getDb();
+  const db = await getDb();
   return db`
     SELECT id, dream_id, tag, is_custom
     FROM dreamdis_dream_tags
@@ -126,7 +158,7 @@ export async function insertDream(data: {
   audio_key?: string | null;
   mood?: string | null;
 }): Promise<DreamRow> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db`
     INSERT INTO dreamdis_dreams (device_id, content, interpreter, audio_key, mood)
     VALUES (${data.device_id}, ${data.content}, ${data.interpreter || null}, ${data.audio_key || null}, ${data.mood || null})
@@ -136,7 +168,7 @@ export async function insertDream(data: {
 }
 
 export async function findDreamById(id: number): Promise<DreamRow | null> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db`
     SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams WHERE id = ${id}
@@ -149,7 +181,7 @@ export async function findDreamByContent(opts: {
   content: string;
   interpreter: string;
 }): Promise<DreamRow | null> {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db`
     SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams
@@ -160,7 +192,7 @@ export async function findDreamByContent(opts: {
 }
 
 export async function updateDream(id: number, updates: Record<string, any>): Promise<DreamRow | null> {
-  const db = getDb();
+  const db = await getDb();
   const setClauses: string[] = [];
   const values: any[] = [];
   let paramIdx = 1;
@@ -180,14 +212,14 @@ export async function updateDream(id: number, updates: Record<string, any>): Pro
 }
 
 export async function deleteDream(id: number): Promise<boolean> {
-  const db = getDb();
+  const db = await getDb();
   const result = await db`DELETE FROM dreamdis_dreams WHERE id = ${id}`;
   return result.count > 0;
 }
 
 export async function insertTags(tags: Array<{ dream_id: number; tag: string; is_custom: boolean }>): Promise<void> {
   if (tags.length === 0) return;
-  const db = getDb();
+  const db = await getDb();
   for (const t of tags) {
     await db`
       INSERT INTO dreamdis_dream_tags (dream_id, tag, is_custom)
@@ -197,12 +229,12 @@ export async function insertTags(tags: Array<{ dream_id: number; tag: string; is
 }
 
 export async function deleteTagsByDreamId(dreamId: number): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db`DELETE FROM dreamdis_dream_tags WHERE dream_id = ${dreamId}`;
 }
 
 export async function findMessagesByDreamId(dreamId: number): Promise<MessageRow[]> {
-  const db = getDb();
+  const db = await getDb();
   return db`
     SELECT id, dream_id, role, content, created_at
     FROM dreamdis_messages
@@ -216,7 +248,7 @@ export async function insertMessage(data: {
   role: string;
   content: string;
 }): Promise<void> {
-  const db = getDb();
+  const db = await getDb();
   await db`
     INSERT INTO dreamdis_messages (dream_id, role, content)
     VALUES (${data.dream_id}, ${data.role}, ${data.content})

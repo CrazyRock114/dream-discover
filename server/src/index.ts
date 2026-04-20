@@ -26,7 +26,7 @@ function getDeviceId(req: express.Request): string {
 // ─── Health ───
 app.get("/api/v1/health", async (_req, res) => {
   try {
-    const pg = db.getDb();
+    const pg = await db.getDb();
     const result = await pg`SELECT 1 AS ok`;
     res.status(200).json({ status: "ok", db: "connected" });
   } catch (err: any) {
