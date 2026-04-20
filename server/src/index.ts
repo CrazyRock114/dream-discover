@@ -556,7 +556,10 @@ app.get("/api/v1/interpreters", (_req, res) => {
 
 // Run migration then start server
 runMigration().then(() => {
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`Server listening at http://localhost:${port}/`);
   });
+  // 设置请求超时为 120 秒，适配 ASR 转写等耗时操作
+  server.timeout = 120_000;
+  server.headersTimeout = 125_000;
 });

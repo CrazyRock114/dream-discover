@@ -206,6 +206,8 @@ export async function transcribeAudioDirect(fileUri: string, mimeType: string): 
     method: 'POST',
     headers,
     body: formData,
+    // ASR 转写可能需要较长时间，设置 90 秒超时
+    signal: AbortSignal.timeout(90_000),
   });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));

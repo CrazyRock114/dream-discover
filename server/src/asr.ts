@@ -21,13 +21,15 @@ const useExternalASR = !!ASR_API_KEY;
 
 console.log(`[asr] Provider: ${useExternalASR ? `external (${ASR_BASE_URL}, model: ${ASR_MODEL})` : "coze-sdk"}`);
 
-// External ASR client (lazy init)
+// External ASR client (lazy init) - 设置较长超时适配音频转写
 let asrClient: OpenAI | null = null;
 function getASRClient(): OpenAI {
   if (!asrClient) {
     asrClient = new OpenAI({
       apiKey: ASR_API_KEY,
       baseURL: ASR_BASE_URL,
+      timeout: 60_000, // 60秒超时（Groq Whisper 通常 5-15秒完成）
+      maxRetries: 2,
     });
   }
   return asrClient;
@@ -93,16 +95,58 @@ export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "
   const file = new File([uint8Array], safeFileName, { type: normalizedMime });
 
   try {
-    const transcription = await getASRClient().audio.transcriptions.create({
+    const transcriptionParams: Record<string, any> = {
       model: ASR_MODEL,
       file,
       language: "zh",
-      response_format: "text",
-    });
+      response_format: "verbose_json",
+      // 减少幻觉：不基于前文生成，避免静音段产生常见文本
+      condition_on_previous_text: false,
+      // 提供初始 prompt 引导模型产出正常对话内容，而非幻觉文本
+      prompt: "以下是中文语音转文字内容：",
+      // 限制温度降低幻觉概率
+      temperature: 0.0,
+    };
 
-    const text = typeof transcription === "string"
-      ? transcription
-      : (transcription as any).text || "";
+    const transcription = await getASRClient().audio.transcriptions.create(
+      transcriptionParams as any
+    );
+
+    let text = "";
+    if (typeof transcription === "string") {
+      text = transcription;
+    } else if ((transcription as any).text) {
+      text = (transcription as any).text;
+    } else if (Array.isArray((transcription as any).segments)) {
+      // verbose_json 返回 segments，取所有 segment 的 text 拼接
+      text = (transcription as any).segments
+        .map((s: any) => s.text || "")
+        .join("")
+        .trim();
+    }
+
+    // 过滤掉 Whisper 常见的幻觉文本
+    const hallucinationPatterns = [
+      "请不吝点赞",
+      "订阅 转发",
+      "大赏支持",
+      "感谢收看",
+      "谢谢观看",
+      "字幕制作",
+      "仅供参考",
+    ];
+    for (const pattern of hallucinationPatterns) {
+      if (text.includes(pattern)) {
+        // 如果整段文本很短且包含幻觉关键词，大概率整段都是幻觉
+        if (text.length < 200) {
+          console.log(`[asr] Detected hallucination pattern "${pattern}", discarding result: "${text.substring(0, 100)}"`);
+          text = "";
+          break;
+        }
+        // 如果文本较长，只移除包含幻觉关键词的句子
+        text = text.split(/[。！？；\n]/).filter(sentence => !hallucinationPatterns.some(p => sentence.includes(p))).join("。").trim();
+      }
+    }
 
     return { text };
   } catch (error: any) {
