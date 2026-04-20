@@ -12,7 +12,6 @@
 import OpenAI from "openai";
 import { ASRClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
 import { readFile as readFromStorage, generatePresignedUrl } from "./r2-storage.js";
-import dns from "dns";
 
 const ASR_API_KEY = process.env.ASR_API_KEY || "";
 const ASR_BASE_URL = process.env.ASR_BASE_URL || "https://api.groq.com/openai/v1";
@@ -22,43 +21,19 @@ const useExternalASR = !!ASR_API_KEY;
 
 console.log(`[asr] Provider: ${useExternalASR ? `external (${ASR_BASE_URL}, model: ${ASR_MODEL})` : "coze-sdk"}`);
 
-// Railway 不支持 IPv6，主动解析 Groq API 域名为 IPv4
-async function resolveBaseUrlToIPv4(baseURL: string): Promise<string> {
-  try {
-    const url = new URL(baseURL);
-    const addresses = await dns.promises.resolve4(url.hostname);
-    if (addresses.length > 0) {
-      console.log(`[asr] Resolved ${url.hostname} -> ${addresses[0]} (IPv4)`);
-      url.hostname = addresses[0];
-      return url.toString();
-    }
-  } catch (err: any) {
-    console.log(`[asr] DNS resolve4 failed for Groq: ${err.message}`);
-  }
-  return baseURL;
-}
-
-// External ASR client (lazy init) - 设置较长超时适配音频转写
+// External ASR client (lazy init)
 let asrClient: OpenAI | null = null;
-let asrClientReady = false;
 
-async function getASRClient(): Promise<OpenAI> {
-  if (!asrClientReady) {
-    // 解析 IPv4 地址（Railway 不支持 IPv6 出站）
-    const resolvedBaseURL = await resolveBaseUrlToIPv4(ASR_BASE_URL);
+function getASRClient(): OpenAI {
+  if (!asrClient) {
     asrClient = new OpenAI({
       apiKey: ASR_API_KEY,
-      baseURL: resolvedBaseURL,
-      timeout: 60_000, // 60秒超时（Groq Whisper 通常 5-15秒完成）
+      baseURL: ASR_BASE_URL,
+      timeout: 60_000,
       maxRetries: 2,
-      defaultHeaders: {
-        // 保留原始 hostname 作为 Host 头，避免 Groq 拒绝请求
-        ...(resolvedBaseURL !== ASR_BASE_URL ? { "Host": new URL(ASR_BASE_URL).hostname } : {}),
-      },
     });
-    asrClientReady = true;
   }
-  return asrClient!;
+  return asrClient;
 }
 
 export interface ASRResult {
@@ -132,7 +107,7 @@ export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "
       temperature: 0.0,
     };
 
-    const transcription = await (await getASRClient()).audio.transcriptions.create(
+    const transcription = await getASRClient().audio.transcriptions.create(
       transcriptionParams as any
     );
 

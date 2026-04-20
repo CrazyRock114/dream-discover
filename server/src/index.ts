@@ -1,3 +1,18 @@
+// Railway 不支持 IPv6 出站连接，全局覆盖 dns.lookup 强制使用 IPv4
+// 必须在所有 import 之前执行，确保所有后续模块的 DNS 解析都走 IPv4
+import dns from "dns";
+const originalLookup = dns.lookup;
+(dns as any).lookup = function overriddenLookup(hostname: string, options: any, callback: any) {
+  // 兼容 (hostname, callback) 和 (hostname, options, callback) 两种调用方式
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  const opts = { ...options, family: 4 };
+  (originalLookup as any)(hostname, opts, callback);
+};
+console.log("[server] DNS lookup overridden: IPv4 forced for all connections");
+
 import express from "express";
 import cors from "cors";
 import multer from "multer";
