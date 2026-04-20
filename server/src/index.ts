@@ -339,6 +339,7 @@ app.post("/api/v1/asr", async (req, res) => {
  * 直接转录音频，无需 R2 存储（推荐用于外部部署）
  */
 app.post("/api/v1/asr/transcribe", upload.single("file"), async (req, res) => {
+  const startTime = Date.now();
   try {
     if (!req.file) {
       res.status(400).json({ error: "请上传音频文件" });
@@ -348,12 +349,16 @@ app.post("/api/v1/asr/transcribe", upload.single("file"), async (req, res) => {
     const audioBuffer = req.file.buffer;
     const fileName = req.file.originalname || "audio.m4a";
     const mimeType = req.file.mimetype || "audio/m4a";
+    console.log(`[asr/transcribe] Received file: ${fileName}, size: ${audioBuffer.length} bytes`);
 
     const result = await transcribeBuffer(audioBuffer, fileName, mimeType);
 
+    const elapsed = Date.now() - startTime;
+    console.log(`[asr/transcribe] Success in ${elapsed}ms, text length: ${result.text.length}`);
     res.json({ text: result.text });
   } catch (err: any) {
-    console.error("POST /asr/transcribe error:", err);
+    const elapsed = Date.now() - startTime;
+    console.error(`[asr/transcribe] Error after ${elapsed}ms:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -416,6 +421,10 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
       if (chunk.content) {
         fullContent += chunk.content;
         res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+        // 强制刷新缓冲区，确保 SSE 数据立即发送到客户端
+        if (typeof (res as any).flush === 'function') {
+          (res as any).flush();
+        }
       }
     }
 
@@ -510,6 +519,9 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
       if (chunk.content) {
         fullContent += chunk.content;
         res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+        if (typeof (res as any).flush === 'function') {
+          (res as any).flush();
+        }
       }
     }
 
