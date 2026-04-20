@@ -178,7 +178,7 @@ INSERT INTO dreamdis_messages (id, dream_id, role, content, created_at) VALUES
 -- 序列名格式为 {表名}_{列名}_seq，表名带 dreamdis_ 前缀
 SELECT setval('dreamdis_dreams_id_seq', 37, true);
 SELECT setval('dreamdis_dream_tags_id_seq', 10, true);
-SELECT setval('dreamdis_messages_id_seq', 79, true);
+SELECT setval('messages_id_seq', 79, true);
 
 -- 9. 通知 PostgREST 刷新 schema cache
 NOTIFY pgrst, 'reload schema';

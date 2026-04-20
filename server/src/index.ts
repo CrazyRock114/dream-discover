@@ -26,10 +26,12 @@ function getDeviceId(req: express.Request): string {
 // ─── Health ───
 app.get("/api/v1/health", async (_req, res) => {
   try {
-    const result = await db.findDreamsByDeviceId({ deviceId: "__health_check__", limit: 1 });
-    res.status(200).json({ status: "ok" });
-  } catch {
-    res.status(200).json({ status: "ok" }); // still return ok, DB may just be empty
+    const pg = db.getDb();
+    const result = await pg`SELECT 1 AS ok`;
+    res.status(200).json({ status: "ok", db: "connected" });
+  } catch (err: any) {
+    console.error("[health] DB connection failed:", err.message);
+    res.status(200).json({ status: "ok", db: "error", error: err.message });
   }
 });
 

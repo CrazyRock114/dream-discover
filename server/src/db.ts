@@ -8,8 +8,11 @@ export function getDb(): ReturnType<typeof postgres> {
     if (!dbUrl) {
       throw new Error("DATABASE_URL is not set");
     }
+    console.log("[db] Connecting to database, sslmode=require:", dbUrl.includes("sslmode=require"));
     sql = postgres(dbUrl, {
       ssl: dbUrl.includes("sslmode=require") ? "require" : undefined,
+      // Supabase PgBouncer (port 6543) 不支持 prepared statements
+      prepare: false,
     });
   }
   return sql;
