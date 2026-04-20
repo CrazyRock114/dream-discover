@@ -54,6 +54,27 @@ function normalizeAudioMimeType(fileName: string, fallbackMimeType: string): str
   return mimeMap[ext] || fallbackMimeType;
 }
 
+// 确保文件名有扩展名（Expo 录音 URI 可能不带扩展名）
+function ensureFileExtension(fileName: string, mimeType: string): string {
+  const hasExtension = fileName.includes('.');
+  if (hasExtension) return fileName;
+
+  // 根据 MIME 类型补充扩展名
+  const mimeToExt: Record<string, string> = {
+    'audio/m4a': '.m4a',
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.mp4',
+    'audio/wav': '.wav',
+    'audio/flac': '.flac',
+    'audio/ogg': '.ogg',
+    'audio/opus': '.opus',
+    'audio/webm': '.webm',
+    'audio/x-m4a': '.m4a',
+  };
+  const ext = mimeToExt[mimeType] || '.m4a'; // 默认 m4a（Expo 录音格式）
+  return fileName + ext;
+}
+
 /**
  * 直接从音频 Buffer 转录（无需 R2 存储）
  * 推荐用于外部部署环境
@@ -63,12 +84,13 @@ export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "
     throw new Error("直接转录需要设置 ASR_API_KEY 环境变量。请在 Railway 中配置 ASR_API_KEY（推荐使用 Groq 免费 Whisper API）");
   }
 
-  // 强制使用标准 MIME 类型，避免 multer 传入的非标准类型导致 Groq 拒绝
-  const normalizedMime = normalizeAudioMimeType(fileName, mimeType);
-  console.log(`[asr] Transcribing file: ${fileName}, mime: ${mimeType} -> ${normalizedMime}, size: ${audioBuffer.length} bytes`);
+  // 确保文件名有扩展名，并强制使用标准 MIME 类型
+  const safeFileName = ensureFileExtension(fileName, mimeType);
+  const normalizedMime = normalizeAudioMimeType(safeFileName, mimeType);
+  console.log(`[asr] Transcribing file: ${fileName} -> ${safeFileName}, mime: ${mimeType} -> ${normalizedMime}, size: ${audioBuffer.length} bytes`);
 
   const uint8Array = new Uint8Array(audioBuffer);
-  const file = new File([uint8Array], fileName, { type: normalizedMime });
+  const file = new File([uint8Array], safeFileName, { type: normalizedMime });
 
   try {
     const transcription = await getASRClient().audio.transcriptions.create({

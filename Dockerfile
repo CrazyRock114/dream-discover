@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 # Force cache bust - increment this value to invalidate Docker build cache
-ARG CACHE_BUST=11
+ARG CACHE_BUST=12
 
 WORKDIR /app
 
