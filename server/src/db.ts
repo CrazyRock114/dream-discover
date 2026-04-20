@@ -1,4 +1,8 @@
 import postgres from "postgres";
+import dns from "dns";
+
+// Railway 不支持 IPv6 出站，强制 DNS 优先解析 IPv4
+dns.setDefaultResultOrder("ipv4first");
 
 let sql: ReturnType<typeof postgres> | null = null;
 
