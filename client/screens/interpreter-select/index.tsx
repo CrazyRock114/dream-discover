@@ -1,3 +1,4 @@
+import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from '@/assets/avatars';
 import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import { Screen } from '@/components/Screen';
@@ -11,7 +12,7 @@ const INTERPRETER_DATA: Interpreter[] = [
     id: 'freud',
     name: '弗洛伊德',
     name_en: 'Sigmund Freud',
-    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832',
+    avatar: '${FREUD_AVATAR_BASE64}',
     title: '精神分析学派创始人',
     tagline: '梦是通往潜意识的皇家大道',
     description: '以精神分析理论解读你的梦境，揭示潜意识中被压抑的欲望与冲突。',
@@ -20,7 +21,7 @@ const INTERPRETER_DATA: Interpreter[] = [
     id: 'zhougong',
     name: '周公',
     name_en: 'Duke of Zhou',
-    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4ad23d7a-5e1a-4f68-9530-16bf23fb6942.jpeg?sign=1807775797-faad9d4411-0-eab185f513ae76adac286fdce9d24e8c3773bc504796ef69ecc9ecb8c12cd1d6',
+    avatar: '${ZHOUGONG_AVATAR_BASE64}',
     title: '中华解梦始祖',
     tagline: '梦境皆有征兆，吉凶自有玄机',
     description: '以《周公解梦》与千年易学智慧，为你揭示梦中的预兆与启示。',

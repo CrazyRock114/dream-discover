@@ -1,3 +1,4 @@
+import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from '@/assets/avatars';
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
@@ -24,12 +25,12 @@ const INTERPRETER_CONFIG: Record<string, { name: string; color: string; avatar: 
   freud: {
     name: '弗洛伊德',
     color: '#A78BFA',
-    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832',
+    avatar: '${FREUD_AVATAR_BASE64}',
   },
   zhougong: {
     name: '周公',
     color: '#67E8F9',
-    avatar: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4ad23d7a-5e1a-4f68-9530-16bf23fb6942.jpeg?sign=1807775797-faad9d4411-0-eab185f513ae76adac286fdce9d24e8c3773bc504796ef69ecc9ecb8c12cd1d6',
+    avatar: '${ZHOUGONG_AVATAR_BASE64}',
   },
 };
 

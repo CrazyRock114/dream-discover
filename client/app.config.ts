@@ -1,7 +1,7 @@
 import { ExpoConfig, ConfigContext } from 'expo/config';
 
-const appName = process.env.COZE_PROJECT_NAME || process.env.EXPO_PUBLIC_COZE_PROJECT_NAME || '应用';
-const projectId = process.env.COZE_PROJECT_ID || process.env.EXPO_PUBLIC_COZE_PROJECT_ID;
+const appName = process.env.APP_NAME || process.env.EXPO_PUBLIC_APP_NAME || '梦境录';
+const projectId = process.env.APP_ID || process.env.EXPO_PUBLIC_APP_ID;
 const slugAppName = projectId ? `app${projectId}` : 'myapp';
 
 export default ({ config }: ConfigContext): ExpoConfig => {

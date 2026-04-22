@@ -3,13 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "bash .cozeproj/scripts/dev_run.sh",
-    "build": "bash .cozeproj/scripts/prod_build.sh",
-    "start": "bash .cozeproj/scripts/prod_run.sh",
+    "dev": "pnpm run dev:server & pnpm run dev:client",
+    "dev:server": "cd server && NODE_ENV=development PORT=9091 npx tsx watch ./src/index.ts",
+    "dev:client": "cd client && EXPO_PUBLIC_BACKEND_BASE_URL=http://localhost:9091 npx expo start --web --clear",
+    "build": "cd server && pnpm run build",
+    "start": "cd server && pnpm run start",
     "preinstall": "npx only-allow pnpm",
-    "lint:client": "npm run lint --prefix ./client",
-    "lint:server": "npm run lint --prefix ./server",
-    "lint:all": "npm run lint --prefix ./client; npm run lint --prefix ./server"
+    "lint:client": "cd client && pnpm run lint",
+    "lint:server": "cd server && pnpm run lint",
+    "lint:all": "pnpm run lint:client && pnpm run lint:server"
   },
   "dependencies": {},
   "devDependencies": {},

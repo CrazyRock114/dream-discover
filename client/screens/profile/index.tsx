@@ -1,3 +1,4 @@
+import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from '@/assets/avatars';
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { Screen } from '@/components/Screen';
@@ -28,7 +29,7 @@ export default function ProfileScreen() {
         <View className="bg-surface rounded-3xl border border-border/30 p-5 mb-3">
           <View className="flex-row items-center gap-4">
             <Image
-              source={{ uri: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832' }}
+              source={{ uri: '${FREUD_AVATAR_BASE64}' }}
               style={{ width: 52, height: 52, borderRadius: 26 }}
               contentFit="cover"
             />
@@ -47,7 +48,7 @@ export default function ProfileScreen() {
         <View className="bg-surface rounded-3xl border border-border/30 p-5 mb-6">
           <View className="flex-row items-center gap-4">
             <Image
-              source={{ uri: 'https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4ad23d7a-5e1a-4f68-9530-16bf23fb6942.jpeg?sign=1807775797-faad9d4411-0-eab185f513ae76adac286fdce9d24e8c3773bc504796ef69ecc9ecb8c12cd1d6' }}
+              source={{ uri: '${ZHOUGONG_AVATAR_BASE64}' }}
               style={{ width: 52, height: 52, borderRadius: 26 }}
               contentFit="cover"
             />

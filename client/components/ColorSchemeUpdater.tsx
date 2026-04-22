@@ -12,26 +12,7 @@ const WebOnlyColorSchemeUpdater = function ({ children }: { children?: ReactNode
     Uniwind.setTheme(DEFAULT_THEME);
   }, []);
 
-  useEffect(() => {
-    function handleMessage(e: MessageEvent<{ event: string; colorScheme: ColorSchemeName; } | undefined>) {
-      if (e.data?.event === 'coze.workbench.colorScheme') {
-        const cs = e.data.colorScheme;
-        if (typeof cs === 'string') {
-          Uniwind.setTheme(cs);
-        }
-      }
-    }
-
-    if (Platform.OS === 'web') {
-      window.addEventListener('message', handleMessage, false);
-    }
-
-    return () => {
-      if (Platform.OS === 'web') {
-        window.removeEventListener('message', handleMessage, false);
-      }
-    }
-  }, []);
+  // Theme is fixed to dark mode; no external theme switching needed
 
   return <Fragment>
     {children}

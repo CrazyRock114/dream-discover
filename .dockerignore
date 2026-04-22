@@ -4,7 +4,6 @@ dist
 .expo-shared
 .DS_Store
 .git
-.cozeproj
 client/dist
 logs
 *.tsbuildinfo

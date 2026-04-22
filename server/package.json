@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.js",
-    "dev": "bash ../.cozeproj/scripts/server_dev_run.sh",
+    "dev": "NODE_ENV=development PORT=9091 npx tsx watch ./src/index.ts",
     "preinstall": "npx only-allow pnpm",
     "start": "NODE_ENV=production node dist/index.js",
     "lint": "tsc --noEmit"
@@ -14,7 +14,6 @@
     "@aws-sdk/s3-request-presigner": "^3.1032.0",
     "@supabase/supabase-js": "2.95.3",
     "cors": "^2.8.5",
-    "coze-coding-dev-sdk": "^0.7.20",
     "dayjs": "^1.11.19",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",

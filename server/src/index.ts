@@ -1,3 +1,4 @@
+import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from "./assets/avatars.js";
 // Railway 不支持 IPv6 出站连接，全局覆盖 dns.lookup 强制使用 IPv4
 // 必须在所有 import 之前执行，确保所有后续模块的 DNS 解析都走 IPv4
 import dns from "dns";
@@ -338,8 +339,7 @@ app.post("/api/v1/asr", async (req, res) => {
       return;
     }
 
-    const reqHeaders = req.headers as Record<string, string>;
-    const result = await asrRecognize({ audio_key }, reqHeaders);
+    const result = await asrRecognize({ audio_key });
 
     res.json({ text: result.text });
   } catch (err: any) {
@@ -419,7 +419,6 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    // Call LLM with streaming (pass request headers for coze SDK fallback)
     let fullContent = "";
 
     const messages = [
@@ -427,10 +426,9 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
       { role: "user" as const, content: userMessage },
     ];
 
-    const reqHeaders = req.headers as Record<string, string>;
     const stream = streamChat(messages, {
       temperature: 0.85,
-    }, reqHeaders);
+    });
 
     for await (const chunk of stream) {
       if (chunk.content) {
@@ -522,13 +520,11 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     // Add current message
     llmMessages.push({ role: "user", content: message.trim() });
 
-    // Call LLM with streaming (pass request headers for coze SDK fallback)
     let fullContent = "";
 
-    const reqHeaders = req.headers as Record<string, string>;
     const stream = streamChat(llmMessages, {
       temperature: 0.85,
-    }, reqHeaders);
+    });
 
     for await (const chunk of stream) {
       if (chunk.content) {
@@ -564,7 +560,7 @@ app.get("/api/v1/interpreters", (_req, res) => {
       id: "freud",
       name: "弗洛伊德",
       name_en: "Sigmund Freud",
-      avatar: "https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_4f7b123e-d886-4846-96b2-d667a6318239.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832",
+      avatar: FREUD_AVATAR_BASE64,
       title: "精神分析学派创始人",
       tagline: "梦是潜意识欲望的满足",
       description: "西格蒙德·弗洛伊德，精神分析学派创始人。他将用自由联想、象征解读等经典精神分析技术，为你揭示梦境背后隐藏的潜意识欲望与冲突。",
@@ -573,7 +569,7 @@ app.get("/api/v1/interpreters", (_req, res) => {
       id: "zhougong",
       name: "周公",
       name_en: "Duke of Zhou",
-      avatar: "https://coze-coding-project.tos.coze.site/coze_storage_7628874118410108955/image/generate_image_d7a5b9cf-cb90-45dc-bcf2-b2e62ac9583e.jpeg?sign=1807775792-a75f4a8b07-0-a3824f0ee068879735b86b086b946bf24dd11121b3c8a5345989dc9c23ce6832",
+      avatar: ZHOUGONG_AVATAR_BASE64,
       title: "千年解梦圣贤",
       tagline: "梦者，心之影也",
       description: "以《周公解梦》与千年易学智慧，为你揭示梦中的预兆与启示。",

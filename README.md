@@ -26,8 +26,7 @@
 │   │   └── index.ts            # 服务端入口文件
 |   └── package.json            # 服务端 package.json
 ├── package.json
-├── .cozeproj                   # 预置脚手架脚本（禁止修改）
-└── .coze                       # 配置文件（禁止修改）
+└── package.json                # 根目录 workspace 配置
 
 ## 样式方案
 
@@ -250,4 +249,13 @@ import { Screen } from '../../../components/Screen';
 
 ## 本地开发
 
-`coze dev`：用来首次启动前后端服务，也可以用来重启前后端服务（该命令会先尝试杀掉占用端口的进程，再启动服务）
+```bash
+# 启动前后端开发服务
+pnpm run dev
+
+# 单独启动后端
+pnpm run dev:server
+
+# 单独启动前端
+pnpm run dev:client
+```
