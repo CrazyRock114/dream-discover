@@ -578,7 +578,7 @@ app.post("/api/v1/auth/send-code", async (req, res) => {
 
     // Generate 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     await db.insertAuthCode(email, code, expiresAt);
 

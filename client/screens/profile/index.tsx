@@ -14,9 +14,17 @@ export default function ProfileScreen() {
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
+  const showAlert = useCallback((title: string, message?: string) => {
+    if (typeof window !== 'undefined' && window.alert) {
+      window.alert(message ? `${title}\n${message}` : title);
+    } else {
+      Alert.alert(title, message);
+    }
+  }, []);
+
   const handleSendCode = useCallback(async () => {
     if (!email.trim() || !email.includes('@')) {
-      Alert.alert('请输入有效的邮箱地址');
+      showAlert('请输入有效的邮箱地址');
       return;
     }
     setSending(true);
@@ -25,13 +33,13 @@ export default function ProfileScreen() {
     if (result.success) {
       setStep('input-code');
     } else {
-      Alert.alert('发送失败', result.error || '请稍后重试');
+      showAlert('发送失败', result.error || '请稍后重试');
     }
-  }, [email, sendCode]);
+  }, [email, sendCode, showAlert]);
 
   const handleVerify = useCallback(async () => {
     if (!code.trim() || code.length !== 6) {
-      Alert.alert('请输入6位验证码');
+      showAlert('请输入6位验证码');
       return;
     }
     setVerifying(true);
@@ -41,9 +49,9 @@ export default function ProfileScreen() {
       setStep('sent');
       setCode('');
     } else {
-      Alert.alert('验证失败', result.error || '验证码错误或已过期');
+      showAlert('验证失败', result.error || '验证码错误或已过期');
     }
-  }, [email, code, verifyCode]);
+  }, [email, code, verifyCode, showAlert]);
 
   const handleLogout = useCallback(async () => {
     // Use window.confirm on web, Alert on native
