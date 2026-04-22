@@ -29,7 +29,7 @@ export default function ProfileScreen() {
         <View className="bg-surface rounded-3xl border border-border/30 p-5 mb-3">
           <View className="flex-row items-center gap-4">
             <Image
-              source={{ uri: '${FREUD_AVATAR_BASE64}' }}
+              source={{ uri: `${FREUD_AVATAR_BASE64}` }}
               style={{ width: 52, height: 52, borderRadius: 26 }}
               contentFit="cover"
             />
@@ -48,7 +48,7 @@ export default function ProfileScreen() {
         <View className="bg-surface rounded-3xl border border-border/30 p-5 mb-6">
           <View className="flex-row items-center gap-4">
             <Image
-              source={{ uri: '${ZHOUGONG_AVATAR_BASE64}' }}
+              source={{ uri: `${ZHOUGONG_AVATAR_BASE64}` }}
               style={{ width: 52, height: 52, borderRadius: 26 }}
               contentFit="cover"
             />

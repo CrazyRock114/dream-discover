@@ -25,12 +25,12 @@ const INTERPRETER_CONFIG: Record<string, { name: string; color: string; avatar: 
   freud: {
     name: '弗洛伊德',
     color: '#A78BFA',
-    avatar: '${FREUD_AVATAR_BASE64}',
+    avatar: `${FREUD_AVATAR_BASE64}`,
   },
   zhougong: {
     name: '周公',
     color: '#67E8F9',
-    avatar: '${ZHOUGONG_AVATAR_BASE64}',
+    avatar: `${ZHOUGONG_AVATAR_BASE64}`,
   },
 };
 
