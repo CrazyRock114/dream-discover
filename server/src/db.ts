@@ -149,6 +149,73 @@ export async function findTagsByDreamIds(dreamIds: number[]): Promise<DreamTagRo
   ` as unknown as Promise<DreamTagRow[]>;
 }
 
+/**
+ * Optimized single-query fetch: dreams + tags via JOIN with jsonb_agg.
+ * Replaces 2-3 round trips with 1 query.
+ */
+export async function findDreamsWithTags(opts: {
+  deviceId: string;
+  limit: number;
+  cursor?: string;
+  mood?: string;
+  tag?: string;
+}): Promise<Array<DreamRow & { tags: Array<{ id: number; tag: string; is_custom: boolean }> }>> {
+  const db = await getDb();
+
+  const params: any[] = [opts.deviceId, opts.limit + 1];
+  let paramIdx = 3;
+
+  let cursorCondition = '';
+  if (opts.cursor) {
+    cursorCondition = `AND d.created_at < $${paramIdx++}::timestamptz`;
+    params.push(opts.cursor);
+  }
+
+  let moodCondition = '';
+  if (opts.mood) {
+    moodCondition = `AND d.mood = $${paramIdx++}`;
+    params.push(opts.mood);
+  }
+
+  let tagCondition = '';
+  if (opts.tag) {
+    tagCondition = `AND EXISTS (SELECT 1 FROM dreamdis_dream_tags tt WHERE tt.dream_id = d.id AND tt.tag = $${paramIdx++})`;
+    params.push(opts.tag);
+  }
+
+  const query = `
+    SELECT
+      d.id, d.device_id, d.content, d.audio_key, d.interpreter, d.interpretation, d.mood, d.created_at,
+      COALESCE(jsonb_agg(
+        jsonb_build_object('id', t.id, 'tag', t.tag, 'is_custom', t.is_custom)
+        ORDER BY t.id
+      ) FILTER (WHERE t.id IS NOT NULL), '[]') as tags
+    FROM dreamdis_dreams d
+    LEFT JOIN dreamdis_dream_tags t ON t.dream_id = d.id
+    WHERE d.device_id = $1
+      ${cursorCondition}
+      ${moodCondition}
+      ${tagCondition}
+    GROUP BY d.id
+    ORDER BY d.created_at DESC
+    LIMIT $2
+  `;
+
+  const rows = await db.unsafe(query, params);
+
+  return rows.map((r: any) => ({
+    id: r.id,
+    device_id: r.device_id,
+    content: r.content,
+    audio_key: r.audio_key,
+    interpreter: r.interpreter,
+    interpretation: r.interpretation,
+    mood: r.mood,
+    created_at: r.created_at,
+    tags: Array.isArray(r.tags) ? r.tags : (typeof r.tags === 'string' ? JSON.parse(r.tags) : []),
+  }));
+}
+
 export async function insertDream(data: {
   device_id: string;
   content: string;

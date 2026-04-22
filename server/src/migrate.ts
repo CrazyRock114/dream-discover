@@ -36,7 +36,11 @@ CREATE INDEX IF NOT EXISTS dreamdis_dreams_created_at_idx ON dreamdis_dreams(cre
 CREATE INDEX IF NOT EXISTS dreamdis_dreams_interpreter_idx ON dreamdis_dreams(interpreter);
 CREATE INDEX IF NOT EXISTS dreamdis_dreams_device_id_idx ON dreamdis_dreams(device_id);
 CREATE INDEX IF NOT EXISTS dreamdis_dreams_mood_idx ON dreamdis_dreams(mood);
+-- Composite index for the main list query (device_id + created_at DESC)
+CREATE INDEX IF NOT EXISTS dreamdis_dreams_device_created_idx ON dreamdis_dreams(device_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS dreamdis_dream_tags_dream_id_idx ON dreamdis_dream_tags(dream_id);
+-- Index for tag filtering
+CREATE INDEX IF NOT EXISTS dreamdis_dream_tags_tag_idx ON dreamdis_dream_tags(tag);
 CREATE INDEX IF NOT EXISTS dreamdis_messages_dream_id_idx ON dreamdis_messages(dream_id);
 
 -- Enable RLS

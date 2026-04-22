@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,10 @@ import { FontAwesome6 } from '@expo/vector-icons';
 import { fetchDreams, deleteDream, type Dream, type DreamTag } from '@/utils/api';
 import { Toast, useToast } from '@/components/Toast';
 import dayjs from 'dayjs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const CACHE_KEY = '@dreamdiscover:dreams_cache';
+const CACHE_STALE_MS = 30_000; // 30 seconds
 
 const INTERPRETER_MAP: Record<string, { name: string; color: string }> = {
   freud: { name: '弗洛伊德', color: '#A78BFA' },
@@ -139,10 +143,36 @@ export default function HomeScreen() {
   const [tagFilter, setTagFilter] = useState('');
   const [showTagFilters, setShowTagFilters] = useState(false);
   const allTags = useRef<string[]>([]);
+  const lastLoadTime = useRef<number>(0);
 
   const { toast, showToast, dismissToast } = useToast();
 
-  const loadDreams = useCallback(async (reset = true) => {
+  // Load from AsyncStorage cache on mount
+  const loadFromCache = useCallback(async () => {
+    try {
+      const cached = await AsyncStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.data && Array.isArray(parsed.data)) {
+          setDreams(parsed.data);
+          setNextCursor(parsed.nextCursor || null);
+          lastLoadTime.current = parsed.timestamp || 0;
+          // Collect tags from cache
+          const tagSet = new Set<string>();
+          for (const dream of parsed.data) {
+            for (const t of dream.tags || []) {
+              tagSet.add(t.tag);
+            }
+          }
+          allTags.current = Array.from(tagSet);
+        }
+      }
+    } catch {
+      // ignore cache errors
+    }
+  }, []);
+
+  const loadDreams = useCallback(async (reset = true, isSilent = false) => {
     try {
       const result = await fetchDreams(
         20,
@@ -156,6 +186,7 @@ export default function HomeScreen() {
         setDreams(prev => [...prev, ...result.data]);
       }
       setNextCursor(result.nextCursor);
+      lastLoadTime.current = Date.now();
 
       // Collect all unique tags from loaded dreams for filter chips
       if (reset) {
@@ -167,18 +198,34 @@ export default function HomeScreen() {
         }
         allTags.current = Array.from(tagSet);
       }
+
+      // Save to cache
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+        data: result.data,
+        nextCursor: result.nextCursor,
+        timestamp: Date.now(),
+      }));
     } catch {
-      showToast('加载梦境列表失败', 'error');
+      if (!isSilent) showToast('加载梦境列表失败', 'error');
     } finally {
       setFirstLoad(false);
       setRefreshing(false);
     }
   }, [nextCursor, moodFilter, tagFilter, showToast]);
 
-  // Silent refresh on focus — no full-screen spinner, just refresh data
+  // Load cache immediately on mount
+  useEffect(() => {
+    loadFromCache();
+  }, [loadFromCache]);
+
+  // Refresh on focus — skip if data is fresh (< 30s)
   useFocusEffect(
     useCallback(() => {
-      loadDreams(true);
+      const now = Date.now();
+      const isStale = now - lastLoadTime.current > CACHE_STALE_MS;
+      if (isStale || dreams.length === 0) {
+        loadDreams(true, dreams.length > 0);
+      }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [moodFilter, tagFilter])
   );
@@ -205,12 +252,42 @@ export default function HomeScreen() {
     }
   };
 
-  // Show a minimal loading indicator only on the very first load
-  if (firstLoad) {
+  // Skeleton card for loading state
+  const SkeletonCard = () => (
+    <View className="bg-surface rounded-3xl p-5 mb-3 border border-border/30">
+      <View className="flex-row items-center gap-2 mb-3">
+        <View className="w-16 h-3 rounded bg-border/30" />
+        <View className="w-12 h-3 rounded bg-border/30" />
+      </View>
+      <View className="w-full h-3 rounded bg-border/30 mb-2" />
+      <View className="w-3/4 h-3 rounded bg-border/30 mb-2" />
+      <View className="w-1/2 h-3 rounded bg-border/30" />
+    </View>
+  );
+
+  // Show skeleton if loading and no cached data yet
+  if (firstLoad && dreams.length === 0) {
     return (
-      <Screen backgroundColor="#0D1026">
-        <View className="flex-1 justify-center items-center">
-          <ActivityIndicator size="large" color="#A78BFA" />
+      <Screen safeAreaEdges={['left', 'right']} backgroundColor="#0D1026">
+        <View
+          className="px-6 pb-4"
+          style={{ paddingTop: 60, backgroundColor: '#0D1026' }}
+        >
+          <View className="flex-row items-center gap-3 mb-1">
+            <View className="w-10 h-10 rounded-xl bg-accent/20 items-center justify-center">
+              <FontAwesome6 name="moon" size={18} color="#A78BFA" />
+            </View>
+            <Text className="text-foreground text-2xl font-bold">梦境录</Text>
+          </View>
+          <Text className="text-muted text-sm" style={{ marginLeft: 52 }}>记录每一个梦，解读每一个谜</Text>
+        </View>
+        <View
+          className="flex-1 px-5 pt-4"
+          style={{ marginTop: -16, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#0D1026' }}
+        >
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
         </View>
       </Screen>
     );

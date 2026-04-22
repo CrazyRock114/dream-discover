@@ -71,40 +71,17 @@ app.get("/api/v1/dreams", async (req, res) => {
     const mood = req.query.mood as string | undefined;
     const tag = req.query.tag as string | undefined;
 
-    let items = await db.findDreamsByDeviceId({
+    // Single-query fetch: dreams + tags with optional filtering
+    let items = await db.findDreamsWithTags({
       deviceId,
       limit,
       cursor,
       mood,
+      tag,
     });
 
     const hasMore = items.length > limit;
     if (hasMore) items = items.slice(0, limit);
-
-    // Filter by tag if specified
-    if (tag && items.length > 0) {
-      const dreamIds = items.map(d => d.id);
-      const taggedDreamIds = await db.findDreamsByTag(dreamIds, tag);
-      const taggedSet = new Set(taggedDreamIds);
-      items = items.filter(d => taggedSet.has(d.id));
-    }
-
-    // Fetch tags for all dreams
-    if (items.length > 0) {
-      const dreamIds = items.map(d => d.id);
-      const allTags = await db.findTagsByDreamIds(dreamIds);
-
-      const tagMap: Record<number, Array<{ id: number; tag: string; is_custom: boolean }>> = {};
-      for (const t of allTags) {
-        if (!tagMap[t.dream_id]) tagMap[t.dream_id] = [];
-        tagMap[t.dream_id].push({ id: t.id, tag: t.tag, is_custom: t.is_custom });
-      }
-
-      items = items.map(d => ({
-        ...d,
-        tags: tagMap[d.id] || [],
-      }));
-    }
 
     const nextCursor = hasMore && items.length > 0 ? items[items.length - 1].created_at : null;
     res.json({ data: items, nextCursor });
