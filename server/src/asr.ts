@@ -91,7 +91,7 @@ export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "
       model: ASR_MODEL,
       file,
       language: "zh",
-      response_format: "verbose_json",
+      response_format: "text",
       prompt: "以下是中文语音转文字内容：",
       temperature: 0.0,
     };
