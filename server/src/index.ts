@@ -1,4 +1,5 @@
 import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from "./assets/avatars.js";
+import crypto from "crypto";
 // Railway 不支持 IPv6 出站连接，全局覆盖 dns.lookup 强制使用 IPv4
 // 必须在所有 import 之前执行，确保所有后续模块的 DNS 解析都走 IPv4
 import dns from "dns";
@@ -636,7 +637,7 @@ app.post("/api/v1/auth/verify-code", async (req, res) => {
     }
 
     // Create session token (32 chars random)
-    const token = require("crypto").randomBytes(32).toString("hex");
+    const token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
     await db.createSession(token, userId, email, expiresAt);
