@@ -1,44 +1,33 @@
 /**
- * Email Service - 使用阿里云邮件推送 HTTP API
- * 绕过 SMTP 端口限制，直接走 HTTP
+ * Email Service - 使用 Resend 发送邮件
  */
-import Core from "@alicloud/pop-core";
+import { Resend } from "resend";
 
-const ALIYUN_ACCESS_KEY_ID = process.env.ALIYUN_ACCESS_KEY_ID || "";
-const ALIYUN_ACCESS_KEY_SECRET = process.env.ALIYUN_ACCESS_KEY_SECRET || "";
-const FROM_EMAIL = process.env.FROM_EMAIL || "";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@dreamdiscover.top";
 
-let client: Core | null = null;
+let resend: Resend | null = null;
 
-function getClient(): Core {
-  if (!client) {
-    if (!ALIYUN_ACCESS_KEY_ID || !ALIYUN_ACCESS_KEY_SECRET) {
-      throw new Error("Aliyun AccessKey not set (ALIYUN_ACCESS_KEY_ID, ALIYUN_ACCESS_KEY_SECRET)");
+function getResend(): Resend {
+  if (!resend) {
+    if (!RESEND_API_KEY) {
+      throw new Error("RESEND_API_KEY not set");
     }
-    client = new Core({
-      accessKeyId: ALIYUN_ACCESS_KEY_ID,
-      accessKeySecret: ALIYUN_ACCESS_KEY_SECRET,
-      endpoint: "https://dm.aliyuncs.com",
-      apiVersion: "2015-11-23",
-    });
+    resend = new Resend(RESEND_API_KEY);
   }
-  return client;
+  return resend;
 }
 
 /**
  * 发送登录验证码邮件
  */
 export async function sendLoginCode(email: string, code: string): Promise<void> {
-  const client = getClient();
-
-  const params = {
-    Action: "SingleSendMail",
-    AccountName: FROM_EMAIL,
-    AddressType: 1,
-    ReplyToAddress: false,
-    ToAddress: email,
-    Subject: "梦境录 - 你的登录验证码",
-    HtmlBody: `
+  const client = getResend();
+  const { error } = await client.emails.send({
+    from: FROM_EMAIL,
+    to: email,
+    subject: "梦境录 - 你的登录验证码",
+    html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
         <h2 style="color: #A78BFA; margin-bottom: 24px;">🌙 梦境录</h2>
         <p style="color: #333; font-size: 16px; line-height: 1.6;">
@@ -56,16 +45,9 @@ export async function sendLoginCode(email: string, code: string): Promise<void> 
         </p>
       </div>
     `,
-  };
+  });
 
-  const requestOption = {
-    method: "POST",
-  };
-
-  try {
-    await client.request("SingleSendMail", params, requestOption);
-  } catch (err: any) {
-    console.error("[email] Aliyun send failed:", err.message || err);
-    throw new Error(`发送邮件失败: ${err.message || err}`);
+  if (error) {
+    throw new Error(`Failed to send email: ${error.message}`);
   }
 }
