@@ -7,26 +7,43 @@ import { Image } from 'expo-image';
 import { useAuth } from '@/contexts/AuthContext';
 
 export default function ProfileScreen() {
-  const { user, isAuthenticated, isLoading, loginWithEmail, logout, migrateDeviceData } = useAuth();
+  const { user, isAuthenticated, isLoading, sendCode, verifyCode, logout } = useAuth();
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [step, setStep] = useState<'input-email' | 'input-code' | 'sent'>('input-email');
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [migrating, setMigrating] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
-  const handleSendLink = useCallback(async () => {
+  const handleSendCode = useCallback(async () => {
     if (!email.trim() || !email.includes('@')) {
       Alert.alert('请输入有效的邮箱地址');
       return;
     }
     setSending(true);
-    const result = await loginWithEmail(email.trim());
+    const result = await sendCode(email.trim());
     setSending(false);
     if (result.success) {
-      setSent(true);
+      setStep('input-code');
     } else {
       Alert.alert('发送失败', result.error || '请稍后重试');
     }
-  }, [email, loginWithEmail]);
+  }, [email, sendCode]);
+
+  const handleVerify = useCallback(async () => {
+    if (!code.trim() || code.length !== 6) {
+      Alert.alert('请输入6位验证码');
+      return;
+    }
+    setVerifying(true);
+    const result = await verifyCode(email.trim(), code.trim());
+    setVerifying(false);
+    if (result.success) {
+      setStep('sent');
+      setCode('');
+    } else {
+      Alert.alert('验证失败', result.error || '验证码错误或已过期');
+    }
+  }, [email, code, verifyCode]);
 
   const handleLogout = useCallback(async () => {
     Alert.alert('退出登录', '确定要退出吗？', [
@@ -35,15 +52,10 @@ export default function ProfileScreen() {
     ]);
   }, [logout]);
 
-  const handleMigrate = useCallback(async () => {
-    setMigrating(true);
-    const migrated = await migrateDeviceData();
-    setMigrating(false);
-    Alert.alert(
-      migrated ? '迁移成功' : '无需迁移',
-      migrated ? '你的匿名梦境已同步到当前账号' : '没有需要迁移的数据'
-    );
-  }, [migrateDeviceData]);
+  const handleBack = useCallback(() => {
+    setStep('input-email');
+    setCode('');
+  }, []);
 
   if (isLoading) {
     return (
@@ -82,20 +94,6 @@ export default function ProfileScreen() {
                 </View>
               </View>
               <TouchableOpacity
-                onPress={handleMigrate}
-                disabled={migrating}
-                className="bg-accent/10 rounded-xl py-3 px-4 mb-3 flex-row items-center justify-center gap-2"
-              >
-                {migrating ? (
-                  <ActivityIndicator size="small" color="#A78BFA" />
-                ) : (
-                  <>
-                    <FontAwesome6 name="cloud-arrow-down" size={14} color="#A78BFA" />
-                    <Text className="text-accent text-sm font-medium">同步匿名梦境数据</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
                 onPress={handleLogout}
                 className="bg-red-500/10 rounded-xl py-3 px-4 flex-row items-center justify-center gap-2"
               >
@@ -103,19 +101,45 @@ export default function ProfileScreen() {
                 <Text className="text-red-400 text-sm font-medium">退出登录</Text>
               </TouchableOpacity>
             </>
-          ) : sent ? (
-            <View className="items-center py-4">
-              <View className="w-14 h-14 rounded-full bg-green-500/10 items-center justify-center mb-4">
-                <FontAwesome6 name="envelope-open-text" size={24} color="#22C55E" />
+          ) : step === 'input-code' ? (
+            <>
+              <View className="flex-row items-center gap-4 mb-4">
+                <View className="w-14 h-14 rounded-full bg-accent/20 items-center justify-center">
+                  <FontAwesome6 name="envelope" size={24} color="#A78BFA" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-foreground text-base font-semibold">输入验证码</Text>
+                  <Text className="text-muted text-xs mt-1">验证码已发送至 {email}</Text>
+                </View>
               </View>
-              <Text className="text-foreground text-base font-semibold mb-2">登录链接已发送</Text>
-              <Text className="text-muted text-sm text-center leading-5">
-                请查看邮箱 {email}，点击邮件中的链接即可登录。{'\n'}链接 5 分钟内有效。
-              </Text>
-              <TouchableOpacity onPress={() => setSent(false)} className="mt-4">
-                <Text className="text-accent text-sm">使用其他邮箱</Text>
+              <TextInput
+                value={code}
+                onChangeText={setCode}
+                placeholder="000000"
+                placeholderTextColor="#6B6890"
+                keyboardType="number-pad"
+                maxLength={6}
+                className="bg-background rounded-xl px-4 py-3 text-foreground text-lg text-center border border-border/30 mb-3 tracking-[8px]"
+              />
+              <TouchableOpacity
+                onPress={handleVerify}
+                disabled={verifying}
+                className="bg-accent rounded-xl py-3 px-4 flex-row items-center justify-center gap-2 mb-3"
+                style={{ backgroundColor: verifying ? '#A78BFA80' : '#A78BFA' }}
+              >
+                {verifying ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <>
+                    <FontAwesome6 name="check" size={14} color="#FFF" />
+                    <Text className="text-white text-sm font-medium">验证并登录</Text>
+                  </>
+                )}
               </TouchableOpacity>
-            </View>
+              <TouchableOpacity onPress={handleBack}>
+                <Text className="text-accent text-sm text-center">← 返回，使用其他邮箱</Text>
+              </TouchableOpacity>
+            </>
           ) : (
             <>
               <View className="flex-row items-center gap-4 mb-4">
@@ -138,7 +162,7 @@ export default function ProfileScreen() {
                 className="bg-background rounded-xl px-4 py-3 text-foreground text-sm border border-border/30 mb-3"
               />
               <TouchableOpacity
-                onPress={handleSendLink}
+                onPress={handleSendCode}
                 disabled={sending}
                 className="bg-accent rounded-xl py-3 px-4 flex-row items-center justify-center gap-2"
                 style={{ backgroundColor: sending ? '#A78BFA80' : '#A78BFA' }}
@@ -148,12 +172,12 @@ export default function ProfileScreen() {
                 ) : (
                   <>
                     <FontAwesome6 name="paper-plane" size={14} color="#FFF" />
-                    <Text className="text-white text-sm font-medium">发送登录链接</Text>
+                    <Text className="text-white text-sm font-medium">发送验证码</Text>
                   </>
                 )}
               </TouchableOpacity>
               <Text className="text-muted text-xs mt-3 text-center leading-4">
-                我们向你的邮箱发送一封包含登录链接的邮件，点击即可登录，无需密码。
+                我们向你的邮箱发送 6 位验证码，输入即可登录，无需密码。
               </Text>
             </>
           )}

@@ -90,6 +90,29 @@ $$;
 ALTER TABLE dreamdis_dreams ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS dreamdis_dreams_user_id_idx ON dreamdis_dreams(user_id);
 
+-- Create auth_codes table for email OTP
+CREATE TABLE IF NOT EXISTS dreamdis_auth_codes (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(255) NOT NULL,
+  code VARCHAR(6) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS dreamdis_auth_codes_email_idx ON dreamdis_auth_codes(email);
+CREATE INDEX IF NOT EXISTS dreamdis_auth_codes_expires_at_idx ON dreamdis_auth_codes(expires_at);
+
+-- Create sessions table for token-based auth
+CREATE TABLE IF NOT EXISTS dreamdis_sessions (
+  id SERIAL PRIMARY KEY,
+  token VARCHAR(64) UNIQUE NOT NULL,
+  user_id UUID NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS dreamdis_sessions_token_idx ON dreamdis_sessions(token);
+CREATE INDEX IF NOT EXISTS dreamdis_sessions_user_id_idx ON dreamdis_sessions(user_id);
+
 -- Notify PostgREST to reload schema cache
 NOTIFY pgrst, 'reload schema';
 `;

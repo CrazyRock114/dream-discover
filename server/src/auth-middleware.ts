@@ -1,9 +1,9 @@
 /**
- * Auth Middleware
- * 从请求头中提取 JWT token，验证后附加 userId 到请求对象
+ * Auth Middleware - Session Token 验证
+ * 从 Authorization header 中提取 token，查 sessions 表验证
  */
 import type { Request, Response, NextFunction } from "express";
-import { verifyAuthToken } from "./supabase.js";
+import * as db from "./db.js";
 
 // 扩展 Express Request 类型
 declare global {
@@ -23,10 +23,10 @@ export async function optionalAuth(req: Request, _res: Response, next: NextFunct
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
-    const user = await verifyAuthToken(token);
-    if (user) {
-      req.userId = user.userId;
-      req.userEmail = user.email;
+    const session = await db.findSessionByToken(token);
+    if (session && new Date(session.expires_at) > new Date()) {
+      req.userId = session.user_id;
+      req.userEmail = session.email;
     }
   }
   next();
@@ -43,12 +43,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
   const token = authHeader.slice(7);
-  const user = await verifyAuthToken(token);
-  if (!user) {
+  const session = await db.findSessionByToken(token);
+  if (!session || new Date(session.expires_at) <= new Date()) {
     res.status(401).json({ error: "登录已过期，请重新登录" });
     return;
   }
-  req.userId = user.userId;
-  req.userEmail = user.email;
+  req.userId = session.user_id;
+  req.userEmail = session.email;
   next();
 }

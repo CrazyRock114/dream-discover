@@ -330,3 +330,64 @@ export async function insertMessage(data: {
     VALUES (${data.dream_id}, ${data.role}, ${data.content})
   `;
 }
+
+// ─── Auth: email codes ───
+
+export async function insertAuthCode(email: string, code: string, expiresAt: Date): Promise<void> {
+  const db = await getDb();
+  await db`
+    INSERT INTO dreamdis_auth_codes (email, code, expires_at)
+    VALUES (${email}, ${code}, ${expiresAt})
+  `;
+}
+
+export async function findValidAuthCode(email: string, code: string): Promise<{ id: number } | null> {
+  const db = await getDb();
+  const rows = await db`
+    SELECT id FROM dreamdis_auth_codes
+    WHERE email = ${email} AND code = ${code} AND expires_at > NOW()
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as { id: number }) || null;
+}
+
+export async function deleteAuthCode(id: number): Promise<void> {
+  const db = await getDb();
+  await db`DELETE FROM dreamdis_auth_codes WHERE id = ${id}`;
+}
+
+// ─── Auth: sessions ───
+
+export interface SessionRow {
+  id: number;
+  token: string;
+  user_id: string;
+  email: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export async function createSession(token: string, userId: string, email: string, expiresAt: Date): Promise<void> {
+  const db = await getDb();
+  await db`
+    INSERT INTO dreamdis_sessions (token, user_id, email, expires_at)
+    VALUES (${token}, ${userId}, ${email}, ${expiresAt})
+  `;
+}
+
+export async function findSessionByToken(token: string): Promise<SessionRow | null> {
+  const db = await getDb();
+  const rows = await db`
+    SELECT id, token, user_id, email, expires_at, created_at
+    FROM dreamdis_sessions
+    WHERE token = ${token}
+    LIMIT 1
+  `;
+  return (rows[0] as unknown as SessionRow) || null;
+}
+
+export async function deleteSessionByToken(token: string): Promise<void> {
+  const db = await getDb();
+  await db`DELETE FROM dreamdis_sessions WHERE token = ${token}`;
+}

@@ -1,6 +1,6 @@
 import { createFormDataFile } from '@/utils';
 import { getDeviceId } from '@/hooks/useDeviceId';
-import { supabase } from './supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * API 服务 - 梦境录后端接口调用
@@ -44,8 +44,10 @@ export interface Message {
   created_at: string;
 }
 
+const AUTH_TOKEN_KEY = '@dreamdiscover:auth_token';
+
 /**
- * 获取带 device_id 的 headers
+ * 获取带 device_id 和 auth token 的 headers
  */
 async function getHeaders(): Promise<Record<string, string>> {
   const deviceId = await getDeviceId();
@@ -56,10 +58,12 @@ async function getHeaders(): Promise<Record<string, string>> {
 
   // Add auth token if user is logged in
   try {
-    const session = await supabase.auth.getSession();
-    const token = session.data.session?.access_token;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    const tokenJson = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
+    if (tokenJson) {
+      const token = JSON.parse(tokenJson);
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
     }
   } catch {
     // ignore auth errors

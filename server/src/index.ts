@@ -563,6 +563,92 @@ app.get("/api/v1/interpreters", (_req, res) => {
 });
 
 /**
+ * POST /api/v1/auth/send-code
+ * 发送邮箱登录验证码
+ * Body: { email: string }
+ */
+app.post("/api/v1/auth/send-code", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ error: "请输入有效的邮箱地址" });
+      return;
+    }
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    await db.insertAuthCode(email, code, expiresAt);
+
+    const { sendLoginCode } = await import("./email.js");
+    await sendLoginCode(email, code);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error("POST /auth/send-code error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/auth/verify-code
+ * 验证邮箱验证码，返回 session token
+ * Body: { email: string, code: string }
+ */
+app.post("/api/v1/auth/verify-code", async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      res.status(400).json({ error: "请输入邮箱和验证码" });
+      return;
+    }
+
+    // Verify code
+    const authCode = await db.findValidAuthCode(email, code);
+    if (!authCode) {
+      res.status(400).json({ error: "验证码错误或已过期" });
+      return;
+    }
+
+    // Delete used code
+    await db.deleteAuthCode(authCode.id);
+
+    // Find or create user in Supabase Auth
+    const { supabaseAdmin } = await import("./supabase.js");
+    let userId: string;
+
+    // Try to find existing user by email
+    const { data: { users }, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+    if (listError) throw listError;
+
+    const existingUser = users.find((u: any) => u.email === email);
+    if (existingUser) {
+      userId = existingUser.id;
+    } else {
+      // Create new user
+      const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        email_confirm: true,
+      });
+      if (createError) throw createError;
+      userId = newUser.user.id;
+    }
+
+    // Create session token (32 chars random)
+    const token = require("crypto").randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+    await db.createSession(token, userId, email, expiresAt);
+
+    res.json({ success: true, token, user: { id: userId, email } });
+  } catch (err: any) {
+    console.error("POST /auth/verify-code error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/v1/migrate-device-data
  * 将匿名设备数据迁移到登录用户
  * Body: { device_id: string }
