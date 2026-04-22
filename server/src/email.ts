@@ -1,45 +1,44 @@
 /**
- * Email Service - 使用 SMTP 发送邮件
- * 支持阿里云邮件推送、QQ邮箱、Gmail 等任意 SMTP 服务
+ * Email Service - 使用阿里云邮件推送 HTTP API
+ * 绕过 SMTP 端口限制，直接走 HTTP
  */
-import nodemailer from "nodemailer";
+import Core from "@alicloud/pop-core";
 
-const SMTP_HOST = process.env.SMTP_HOST || "";
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587");
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const FROM_EMAIL = process.env.FROM_EMAIL || SMTP_USER;
+const ALIYUN_ACCESS_KEY_ID = process.env.ALIYUN_ACCESS_KEY_ID || "";
+const ALIYUN_ACCESS_KEY_SECRET = process.env.ALIYUN_ACCESS_KEY_SECRET || "";
+const FROM_EMAIL = process.env.FROM_EMAIL || "";
 
-let transporter: nodemailer.Transporter | null = null;
+let client: Core | null = null;
 
-function getTransporter(): nodemailer.Transporter {
-  if (!transporter) {
-    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-      throw new Error("SMTP config not set (SMTP_HOST, SMTP_USER, SMTP_PASS)");
+function getClient(): Core {
+  if (!client) {
+    if (!ALIYUN_ACCESS_KEY_ID || !ALIYUN_ACCESS_KEY_SECRET) {
+      throw new Error("Aliyun AccessKey not set (ALIYUN_ACCESS_KEY_ID, ALIYUN_ACCESS_KEY_SECRET)");
     }
-    transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS,
-      },
+    client = new Core({
+      accessKeyId: ALIYUN_ACCESS_KEY_ID,
+      accessKeySecret: ALIYUN_ACCESS_KEY_SECRET,
+      endpoint: "https://dm.aliyuncs.com",
+      apiVersion: "2015-11-23",
     });
   }
-  return transporter;
+  return client;
 }
 
 /**
  * 发送登录验证码邮件
  */
 export async function sendLoginCode(email: string, code: string): Promise<void> {
-  const client = getTransporter();
-  await client.sendMail({
-    from: `"梦境录" <${FROM_EMAIL}>`,
-    to: email,
-    subject: "梦境录 - 你的登录验证码",
-    html: `
+  const client = getClient();
+
+  const params = {
+    Action: "SingleSendMail",
+    AccountName: FROM_EMAIL,
+    AddressType: 1,
+    ReplyToAddress: false,
+    ToAddress: email,
+    Subject: "梦境录 - 你的登录验证码",
+    HtmlBody: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
         <h2 style="color: #A78BFA; margin-bottom: 24px;">🌙 梦境录</h2>
         <p style="color: #333; font-size: 16px; line-height: 1.6;">
@@ -57,5 +56,16 @@ export async function sendLoginCode(email: string, code: string): Promise<void> 
         </p>
       </div>
     `,
-  });
+  };
+
+  const requestOption = {
+    method: "POST",
+  };
+
+  try {
+    await client.request("SingleSendMail", params, requestOption);
+  } catch (err: any) {
+    console.error("[email] Aliyun send failed:", err.message || err);
+    throw new Error(`发送邮件失败: ${err.message || err}`);
+  }
 }
