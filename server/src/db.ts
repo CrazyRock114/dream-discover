@@ -238,7 +238,7 @@ export async function insertDream(data: {
   const rows = await db`
     INSERT INTO dreamdis_dreams (device_id, user_id, content, interpreter, audio_key, mood)
     VALUES (${data.device_id}, ${data.user_id || null}, ${data.content}, ${data.interpreter || null}, ${data.audio_key || null}, ${data.mood || null})
-    RETURNING id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+    RETURNING id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
   `;
   return rows[0] as unknown as DreamRow;
 }
