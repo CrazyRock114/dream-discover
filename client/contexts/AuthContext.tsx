@@ -1,55 +1,114 @@
-// @ts-nocheck
-/**
- * 通用认证上下文
- *
- * 基于固定的 API 接口实现，可复用到其他项目
- * 其他项目使用时，只需修改 @api 的导入路径指向项目的 api 模块
- *
- * 注意：
- * - 如果需要登录/鉴权场景，请扩展本文件，完善 login/logout、token 管理、用户信息获取与刷新等逻辑
- * - 将示例中的占位实现替换为项目实际的接口调用与状态管理
- */
-import React, { createContext, useContext, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { supabase } from '@/utils/supabase';
+import { getDeviceId } from '@/hooks/useDeviceId';
+import { BASE_URL } from '@/utils/api';
 
-interface UserOut {
-
+export interface User {
+  id: string;
+  email?: string;
 }
 
 interface AuthContextType {
-  user: UserOut | null;
-  token: string | null;
+  user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (token: string) => Promise<void>;
+  loginWithEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  updateUser: (userData: Partial<UserOut>) => void;
+  migrateDeviceData: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const value: AuthContextType = {
-    user: null,
-    token: null,
-    isAuthenticated: false,
-    isLoading: false,
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-    // 登录逻辑，根据项目实际情况实现
-    login: async (token: string) => {}, // eslint-disable-line @typescript-eslint/no-empty-function
+  // Listen to auth state changes
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: { id: string; email?: string } | null } | null) => {
+      if (session?.user) {
+        setUser({ id: session.user.id, email: session.user.email });
+      } else {
+        setUser(null);
+      }
+      setIsLoading(false);
+    });
 
-    // 登出逻辑，根据项目实际情况实现
-    logout: async () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }: { data: { session: { user: { id: string; email?: string } | null } | null } }) => {
+      if (session?.user) {
+        setUser({ id: session.user.id, email: session.user.email });
+      }
+      setIsLoading(false);
+    });
 
-    // 更新用户信息，根据项目实际情况实现
-    updateUser: () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
-  };
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Send magic link
+  const loginWithEmail = useCallback(async (email: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  }, []);
+
+  // Migrate anonymous device data to logged-in user
+  const migrateDeviceData = useCallback(async (): Promise<boolean> => {
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) return false;
+
+      const deviceId = await getDeviceId();
+      const res = await fetch(`${BASE_URL}/api/v1/migrate-device-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.migrated > 0;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{
+      user,
+      isAuthenticated: !!user,
+      isLoading,
+      loginWithEmail,
+      logout,
+      migrateDeviceData,
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
 };

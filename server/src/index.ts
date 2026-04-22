@@ -23,6 +23,7 @@ import { recognize as asrRecognize, transcribeBuffer } from "./asr.js";
 import { FREUD_PROMPT, ZHOUGONG_PROMPT } from "./interpreters.js";
 import { runMigration } from "./migrate.js";
 import * as db from "./db.js";
+import { optionalAuth } from "./auth-middleware.js";
 
 const app = express();
 const port = process.env.PORT || 9091;
@@ -31,6 +32,7 @@ const port = process.env.PORT || 9091;
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(optionalAuth);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
@@ -74,6 +76,7 @@ app.get("/api/v1/dreams", async (req, res) => {
     // Single-query fetch: dreams + tags with optional filtering
     let items = await db.findDreamsWithTags({
       deviceId,
+      userId: req.userId,
       limit,
       cursor,
       mood,
@@ -116,6 +119,7 @@ app.post("/api/v1/dreams", async (req, res) => {
 
     const data = await db.insertDream({
       device_id: deviceId,
+      user_id: req.userId || null,
       content: content.trim(),
       interpreter: interpreter || null,
       audio_key: audio_key || null,
@@ -556,6 +560,37 @@ app.get("/api/v1/interpreters", (_req, res) => {
       description: "以《周公解梦》与千年易学智慧，为你揭示梦中的预兆与启示。",
     },
   ]);
+});
+
+/**
+ * POST /api/v1/migrate-device-data
+ * 将匿名设备数据迁移到登录用户
+ * Body: { device_id: string }
+ */
+app.post("/api/v1/migrate-device-data", async (req, res) => {
+  try {
+    const { device_id } = req.body;
+    if (!req.userId) {
+      res.status(401).json({ error: "请先登录" });
+      return;
+    }
+    if (!device_id) {
+      res.status(400).json({ error: "缺少 device_id" });
+      return;
+    }
+
+    const dbConn = await db.getDb();
+    const result = await dbConn`
+      UPDATE dreamdis_dreams
+      SET user_id = ${req.userId}
+      WHERE device_id = ${device_id} AND user_id IS NULL
+    `;
+
+    res.json({ migrated: result.count });
+  } catch (err: any) {
+    console.error("POST /migrate-device-data error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Run migration then start server

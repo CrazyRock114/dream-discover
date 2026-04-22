@@ -85,48 +85,53 @@ export interface MessageRow {
 
 export async function findDreamsByDeviceId(opts: {
   deviceId: string;
+  userId?: string;
   limit: number;
   cursor?: string;
   mood?: string;
 }): Promise<DreamRow[]> {
   const db = await getDb();
 
+  // If user is logged in, query by user_id; otherwise by device_id
+  const idColumn = opts.userId ? 'user_id' : 'device_id';
+  const idValue = opts.userId || opts.deviceId;
+
   if (opts.cursor) {
     if (opts.mood) {
-      return db`
+      return db.unsafe(`
         SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
         FROM dreamdis_dreams
-        WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood} AND created_at < ${opts.cursor}
+        WHERE ${idColumn} = $1 AND mood = $2 AND created_at < $3
         ORDER BY created_at DESC
-        LIMIT ${opts.limit + 1}
-      ` as unknown as Promise<DreamRow[]>;
+        LIMIT $4
+      `, [idValue, opts.mood, opts.cursor, opts.limit + 1]) as unknown as Promise<DreamRow[]>;
     }
-    return db`
+    return db.unsafe(`
       SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
       FROM dreamdis_dreams
-      WHERE device_id = ${opts.deviceId} AND created_at < ${opts.cursor}
+      WHERE ${idColumn} = $1 AND created_at < $2
       ORDER BY created_at DESC
-      LIMIT ${opts.limit + 1}
-    ` as unknown as Promise<DreamRow[]>;
+      LIMIT $3
+    `, [idValue, opts.cursor, opts.limit + 1]) as unknown as Promise<DreamRow[]>;
   }
 
   if (opts.mood) {
-    return db`
+    return db.unsafe(`
       SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
       FROM dreamdis_dreams
-      WHERE device_id = ${opts.deviceId} AND mood = ${opts.mood}
+      WHERE ${idColumn} = $1 AND mood = $2
       ORDER BY created_at DESC
-      LIMIT ${opts.limit + 1}
-    ` as unknown as Promise<DreamRow[]>;
+      LIMIT $3
+    `, [idValue, opts.mood, opts.limit + 1]) as unknown as Promise<DreamRow[]>;
   }
 
-  return db`
+  return db.unsafe(`
     SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams
-    WHERE device_id = ${opts.deviceId}
+    WHERE ${idColumn} = $1
     ORDER BY created_at DESC
-    LIMIT ${opts.limit + 1}
-  ` as unknown as Promise<DreamRow[]>;
+    LIMIT $2
+  `, [idValue, opts.limit + 1]) as unknown as Promise<DreamRow[]>;
 }
 
 export async function findDreamsByTag(dreamIds: number[], tag: string): Promise<number[]> {
@@ -155,6 +160,7 @@ export async function findTagsByDreamIds(dreamIds: number[]): Promise<DreamTagRo
  */
 export async function findDreamsWithTags(opts: {
   deviceId: string;
+  userId?: string;
   limit: number;
   cursor?: string;
   mood?: string;
@@ -162,7 +168,11 @@ export async function findDreamsWithTags(opts: {
 }): Promise<Array<DreamRow & { tags: Array<{ id: number; tag: string; is_custom: boolean }> }>> {
   const db = await getDb();
 
-  const params: any[] = [opts.deviceId, opts.limit + 1];
+  // If user is logged in, query by user_id; otherwise by device_id
+  const idColumn = opts.userId ? 'user_id' : 'device_id';
+  const idValue = opts.userId || opts.deviceId;
+
+  const params: any[] = [idValue, opts.limit + 1];
   let paramIdx = 3;
 
   let cursorCondition = '';
@@ -192,7 +202,7 @@ export async function findDreamsWithTags(opts: {
       ) FILTER (WHERE t.id IS NOT NULL), '[]') as tags
     FROM dreamdis_dreams d
     LEFT JOIN dreamdis_dream_tags t ON t.dream_id = d.id
-    WHERE d.device_id = $1
+    WHERE d.${idColumn} = $1
       ${cursorCondition}
       ${moodCondition}
       ${tagCondition}
@@ -218,6 +228,7 @@ export async function findDreamsWithTags(opts: {
 
 export async function insertDream(data: {
   device_id: string;
+  user_id?: string | null;
   content: string;
   interpreter?: string | null;
   audio_key?: string | null;
@@ -225,8 +236,8 @@ export async function insertDream(data: {
 }): Promise<DreamRow> {
   const db = await getDb();
   const rows = await db`
-    INSERT INTO dreamdis_dreams (device_id, content, interpreter, audio_key, mood)
-    VALUES (${data.device_id}, ${data.content}, ${data.interpreter || null}, ${data.audio_key || null}, ${data.mood || null})
+    INSERT INTO dreamdis_dreams (device_id, user_id, content, interpreter, audio_key, mood)
+    VALUES (${data.device_id}, ${data.user_id || null}, ${data.content}, ${data.interpreter || null}, ${data.audio_key || null}, ${data.mood || null})
     RETURNING id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
   `;
   return rows[0] as unknown as DreamRow;

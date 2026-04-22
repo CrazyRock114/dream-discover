@@ -1,11 +1,12 @@
 import { createFormDataFile } from '@/utils';
 import { getDeviceId } from '@/hooks/useDeviceId';
+import { supabase } from './supabase';
 
 /**
  * API 服务 - 梦境录后端接口调用
  */
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL;
+export const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || '';
 
 export interface DreamTag {
   id: number;
@@ -48,10 +49,23 @@ export interface Message {
  */
 async function getHeaders(): Promise<Record<string, string>> {
   const deviceId = await getDeviceId();
-  return {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-device-id': deviceId,
   };
+
+  // Add auth token if user is logged in
+  try {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // ignore auth errors
+  }
+
+  return headers;
 }
 
 /**

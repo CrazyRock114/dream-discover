@@ -86,6 +86,10 @@ BEGIN
 END
 $$;
 
+-- Add user_id to dreams table for auth migration
+ALTER TABLE dreamdis_dreams ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS dreamdis_dreams_user_id_idx ON dreamdis_dreams(user_id);
+
 -- Notify PostgREST to reload schema cache
 NOTIFY pgrst, 'reload schema';
 `;
