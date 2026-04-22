@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '@/utils/api';
+import { getDeviceId } from '@/hooks/useDeviceId';
 
 const AUTH_TOKEN_KEY = '@dreamdiscover:auth_token';
 const AUTH_USER_KEY = '@dreamdiscover:auth_user';
@@ -80,6 +81,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await AsyncStorage.setItem(AUTH_TOKEN_KEY, JSON.stringify(data.token));
       await AsyncStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
       setUser(data.user);
+
+      // Auto-migrate anonymous device data to logged-in user
+      try {
+        const deviceId = await getDeviceId();
+        await fetch(`${BASE_URL}/api/v1/migrate-device-data`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${data.token}`,
+          },
+          body: JSON.stringify({ device_id: deviceId }),
+        });
+      } catch {
+        // ignore migration errors
+      }
 
       return { success: true };
     } catch (err: any) {

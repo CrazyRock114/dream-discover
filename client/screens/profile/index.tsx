@@ -46,10 +46,17 @@ export default function ProfileScreen() {
   }, [email, code, verifyCode]);
 
   const handleLogout = useCallback(async () => {
-    Alert.alert('退出登录', '确定要退出吗？', [
-      { text: '取消', style: 'cancel' },
-      { text: '退出', style: 'destructive', onPress: logout },
-    ]);
+    // Use window.confirm on web, Alert on native
+    if (typeof window !== 'undefined' && window.confirm) {
+      if (window.confirm('确定要退出登录吗？')) {
+        await logout();
+      }
+    } else {
+      Alert.alert('退出登录', '确定要退出吗？', [
+        { text: '取消', style: 'cancel' },
+        { text: '退出', style: 'destructive', onPress: logout },
+      ]);
+    }
   }, [logout]);
 
   const handleBack = useCallback(() => {
