@@ -12,7 +12,6 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",
     "@aws-sdk/s3-request-presigner": "^3.1032.0",
-    "@sendgrid/mail": "^8.1.6",
     "@supabase/supabase-js": "2.95.3",
     "cors": "^2.8.5",
     "dayjs": "^1.11.19",
@@ -21,6 +20,7 @@
     "drizzle-zod": "^0.8.3",
     "express": "^4.22.1",
     "multer": "^2.0.2",
+    "nodemailer": "^8.0.5",
     "openai": "^6.34.0",
     "pg": "^8.16.3",
     "postgres": "^3.4.9",
@@ -30,6 +30,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.0.0",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.16.0",
     "drizzle-kit": "^0.31.8",
     "esbuild": "0.27.2",
