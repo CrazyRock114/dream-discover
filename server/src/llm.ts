@@ -48,7 +48,7 @@ export async function* streamChat(
 ): AsyncGenerator<LLMStreamChunk> {
   const client = getOpenAIClient();
   const model = options?.model || LLM_MODEL;
-  const temperature = options?.temperature ?? 0.85;
+  const temperature = options?.temperature ?? 0.55;
 
   const stream = await client.chat.completions.create({
     model,

@@ -405,13 +405,14 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const conciseSuffix = isConcise
-      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。"
+      ? "【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。\n\n"
       : "";
     const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
     const userMessage = `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;
+    const llmUserMessage = conciseSuffix + userMessage;
 
-    // Save user message
-    await db.insertMessage({ dream_id: dream.id, role: "user", content: userMessage });
+    // Save raw dream content to DB (not the templated message)
+    await db.insertMessage({ dream_id: dream.id, role: "user", content: dream.content });
 
     // Set SSE headers
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -422,12 +423,12 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     let fullContent = "";
 
     const messages = [
-      { role: "system" as const, content: systemPrompt + conciseSuffix },
-      { role: "user" as const, content: userMessage },
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: llmUserMessage },
     ];
 
     const stream = streamChat(messages, {
-      temperature: 0.85,
+      temperature: 0.55,
     });
 
     for await (const chunk of stream) {
@@ -500,15 +501,18 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     // Build messages array
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const conciseSuffix = isConcise
-      ? "\n\n【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。"
+      ? "【输出模式：精简引导】请遵守以下规则：1. 你的首次回复控制在300字左右，提炼2-3个核心解读要点，适度展开但不必长篇论证；若梦境内容复杂（多场景、多人物、强情绪），可酌情增加至400字；2. 结尾必须用一个简短的追问引导做梦者进一步探索，例如「你对梦中XX的感觉如何？」；3. 后续每轮回复保持精简，200字以内，逐步深入。\n\n"
       : "";
+    const moodHint = dream.mood ? `\n（做梦者对这个梦的感受是：${dream.mood === "good" ? "好梦" : dream.mood === "bad" ? "噩梦" : "中性"}）` : "";
+    const firstUserMessage = conciseSuffix + `我梦见了这样的场景：\n\n${dream.content}${moodHint}\n\n请为我解析这个梦境。`;
+
     const llmMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-      { role: "system", content: systemPrompt + conciseSuffix },
-      { role: "user", content: `我梦见了这样的场景：\n\n${dream.content}\n\n请为我解析这个梦境。` },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: firstUserMessage },
     ];
 
-    // Add conversation history (skip first user message which is the initial dream)
-    if (history && history.length > 1) {
+    // Add conversation history (skip first user message which was raw dream content)
+    if (history && history.length > 0) {
       for (let i = 1; i < history.length; i++) {
         llmMessages.push({
           role: history[i].role as "user" | "assistant",
@@ -523,7 +527,7 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     let fullContent = "";
 
     const stream = streamChat(llmMessages, {
-      temperature: 0.85,
+      temperature: 0.55,
     });
 
     for await (const chunk of stream) {
