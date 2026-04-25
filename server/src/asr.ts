@@ -280,15 +280,18 @@ export async function transcribeBuffer(
     await submitTask(r2Url, outputFormat, taskId);
     console.log(`[asr] Task submitted, id: ${taskId}`);
 
-    // 3. 轮询查询结果（最多 60 秒）
-    const maxWaitMs = 60_000;
-    const pollIntervalMs = 1_500;
+    // 3. 轮询查询结果（最多 120 秒）
+    const maxWaitMs = 120_000;
+    const pollIntervalMs = 500; // 0.5s 轮询，减少等待
     const startTime = Date.now();
+    let pollCount = 0;
 
     while (Date.now() - startTime < maxWaitMs) {
       await sleep(pollIntervalMs);
+      pollCount++;
       const result = await queryTask(taskId);
-      console.log(`[asr] Poll result: code=${result.code}, done=${result.done}`);
+      const elapsed = Date.now() - startTime;
+      console.log(`[asr] Poll #${pollCount} (${elapsed}ms): code=${result.code}, done=${result.done}`);
 
       if (result.done) {
         let text = result.text || "";
@@ -296,12 +299,12 @@ export async function transcribeBuffer(
         // 火山引擎基本无中文幻觉，但保留过滤逻辑作为兜底
         text = filterHallucinations(text);
 
-        console.log(`[asr] Recognition complete, text length: ${text.length}`);
+        console.log(`[asr] Recognition complete in ${elapsed}ms, text length: ${text.length}`);
         return { text };
       }
     }
 
-    throw new Error("ASR 识别超时，请稍后重试");
+    throw new Error(`ASR 识别超时（已等待 ${Math.round((Date.now() - startTime) / 1000)} 秒），请缩短语音后重试`);
   } catch (error: any) {
     console.error("[asr] Transcription error:", error.message);
     throw new Error(`语音识别失败: ${error.message}`);
