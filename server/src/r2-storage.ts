@@ -10,14 +10,28 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const R2_ENDPOINT = process.env.R2_ENDPOINT || "";
+/**
+ * Normalize R2 endpoint URL: ensure https:// prefix and no trailing slash
+ */
+function normalizeEndpoint(url: string): string {
+  let endpoint = url.trim();
+  if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+    endpoint = "https://" + endpoint;
+  }
+  return endpoint.replace(/\/$/, "");
+}
+
+const R2_ENDPOINT_RAW = process.env.R2_ENDPOINT || "";
+const R2_ENDPOINT = normalizeEndpoint(R2_ENDPOINT_RAW);
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || "";
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
 const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || "";
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 
-if (!R2_ENDPOINT) {
+if (!R2_ENDPOINT_RAW) {
   console.warn("[r2-storage] R2_ENDPOINT is not set. File uploads will fail.");
+} else {
+  console.log(`[r2-storage] Endpoint normalized: ${R2_ENDPOINT.substring(0, 40)}...`);
 }
 
 // R2 client (lazy init)
@@ -51,15 +65,23 @@ export async function uploadFile(params: {
   const uuidPrefix = crypto.randomUUID().split("-")[0];
   const key = `${uuidPrefix}_${params.fileName}`;
 
-  await getR2Client().send(
-    new PutObjectCommand({
-      Bucket: R2_BUCKET_NAME,
-      Key: key,
-      Body: params.fileContent,
-      ContentType: params.contentType,
-    })
-  );
-  return key;
+  console.log(`[r2-storage] Uploading to bucket: ${R2_BUCKET_NAME}, key: ${key}, size: ${params.fileContent.length} bytes`);
+
+  try {
+    await getR2Client().send(
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: key,
+        Body: params.fileContent,
+        ContentType: params.contentType,
+      })
+    );
+    console.log(`[r2-storage] Upload success: ${key}`);
+    return key;
+  } catch (err: any) {
+    console.error(`[r2-storage] Upload failed: ${err.message}, endpoint: ${R2_ENDPOINT.substring(0, 50)}...`);
+    throw err;
+  }
 }
 
 /**
