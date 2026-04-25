@@ -107,23 +107,32 @@ export default function RecordScreen() {
   const handleClearAll = useCallback(() => {
     if (!content && !mood && selectedTags.length === 0) return;
 
-    Alert.alert('开始新记录', '将清空当前所有输入内容，确定吗？', [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '清空',
-        style: 'destructive',
-        onPress: async () => {
-          if (isRecording) {
-            await cancelRecording();
-          }
-          setContent('');
-          setMood('');
-          setSelectedTags([]);
-          setCustomTagInput('');
-          showToast('已清空，开始新记录', 'success');
+    const doClear = async () => {
+      if (isRecording) {
+        await cancelRecording();
+      }
+      setContent('');
+      setMood('');
+      setSelectedTags([]);
+      setCustomTagInput('');
+      showToast('已清空，开始新记录', 'success');
+    };
+
+    // Web uses window.confirm, native uses Alert.alert
+    if (typeof window !== 'undefined' && window.confirm) {
+      if (window.confirm('将清空当前所有输入内容，确定吗？')) {
+        doClear();
+      }
+    } else {
+      Alert.alert('开始新记录', '将清空当前所有输入内容，确定吗？', [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '清空',
+          style: 'destructive',
+          onPress: () => { doClear(); },
         },
-      },
-    ]);
+      ]);
+    }
   }, [content, mood, selectedTags, isRecording, cancelRecording, showToast]);
 
   const formatDuration = (seconds: number) => {
