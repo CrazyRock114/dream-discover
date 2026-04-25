@@ -96,27 +96,47 @@ async function convertToMp3(inputBuffer: Buffer, inputFormat: string): Promise<B
  * 上传音频到 R2 并获取临时 URL
  */
 async function uploadAudioToR2(audioBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
-  const key = await uploadFile({
-    fileContent: audioBuffer,
-    fileName: `asr-temp/${Date.now()}-${fileName}`,
-    contentType: mimeType,
-  });
+  let key: string;
+  try {
+    key = await uploadFile({
+      fileContent: audioBuffer,
+      fileName: `asr-temp/${Date.now()}-${fileName}`,
+      contentType: mimeType,
+    });
+    console.log(`[asr] Uploaded to R2, key: ${key}`);
+  } catch (err: any) {
+    console.error(`[asr] R2 upload failed: ${err.message}`);
+    throw new Error(`音频临时存储失败: ${err.message}`);
+  }
 
   // 生成 10 分钟有效期的预签名 URL
-  const url = await generatePresignedUrl({ key, expireTime: 600 });
-
-  // 调度清理（识别完成后删除）
-  return url;
+  try {
+    const url = await generatePresignedUrl({ key, expireTime: 600 });
+    console.log(`[asr] Generated presigned URL: ${url.substring(0, 120)}...`);
+    return url;
+  } catch (err: any) {
+    console.error(`[asr] Generate presigned URL failed: ${err.message}`);
+    throw new Error(`生成音频访问链接失败: ${err.message}`);
+  }
 }
 
 /**
  * 从 R2 URL 中提取 key
+ * 支持两种格式:
+ * - 公开/自定义域名: /asr-temp/123-file.mp3
+ * - S3 预签名 URL: /bucket-name/asr-temp/123-file.mp3
  */
 function extractKeyFromUrl(url: string): string | null {
   try {
     const urlObj = new URL(url);
-    const pathParts = urlObj.pathname.split("/");
-    // pathname 格式: /asr-temp/1234567890-recording.m4a
+    const pathParts = urlObj.pathname.split("/").filter(Boolean);
+
+    // 格式1: /asr-temp/123-file.mp3 (公开URL)
+    if (pathParts.length >= 2 && pathParts[0] === "asr-temp") {
+      return pathParts.join("/");
+    }
+
+    // 格式2: /bucket-name/asr-temp/123-file.mp3 (S3预签名URL)
     if (pathParts.length >= 3 && pathParts[1] === "asr-temp") {
       return pathParts.slice(1).join("/");
     }

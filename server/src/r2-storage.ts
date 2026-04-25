@@ -73,14 +73,22 @@ export async function generatePresignedUrl(params: {
     return `${R2_PUBLIC_URL}/${params.key}`;
   }
 
-  const command = new GetObjectCommand({
-    Bucket: R2_BUCKET_NAME,
-    Key: params.key,
-  });
+  try {
+    const command = new GetObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: params.key,
+    });
 
-  return getSignedUrl(getR2Client(), command, {
-    expiresIn: params.expireTime || 86400,
-  });
+    const url = await getSignedUrl(getR2Client(), command, {
+      expiresIn: params.expireTime || 86400,
+    });
+    return url;
+  } catch (err: any) {
+    console.warn(`[r2-storage] getSignedUrl failed: ${err.message}, falling back to direct URL construction`);
+    // Fallback: construct direct URL (bucket must allow public read or use custom domain)
+    const endpoint = R2_ENDPOINT.replace(/\/$/, "");
+    return `${endpoint}/${R2_BUCKET_NAME}/${params.key}`;
+  }
 }
 
 /**
