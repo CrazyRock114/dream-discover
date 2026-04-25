@@ -1,142 +1,303 @@
 /**
  * ASR (Automatic Speech Recognition) Client
- * 
- * 使用外部 OpenAI 兼容 Whisper API
- * 支持两种输入方式：
- * - audio_key/audio_url：从存储读取音频文件
- * - audioBuffer：直接传入音频 Buffer（无需存储，推荐用于外部部署）
+ *
+ * 使用火山引擎豆包语音 - 大模型录音文件识别 API v3
+ * 流程：音频 buffer → ffmpeg 转码(MP3) → R2 临时存储 → 提交识别任务 → 轮询结果
  */
-import OpenAI from "openai";
-import { readFile as readFromStorage } from "./r2-storage.js";
+import { spawn } from "child_process";
+import { promisify } from "util";
+import { readFile as readFromStorage, uploadFile, deleteFile, generatePresignedUrl } from "./r2-storage.js";
 
-const ASR_API_KEY = process.env.ASR_API_KEY || "";
-const ASR_BASE_URL = process.env.ASR_BASE_URL || "https://api.groq.com/openai/v1";
-const ASR_MODEL = process.env.ASR_MODEL || "whisper-large-v3";
+const VOLCENGINE_API_KEY = process.env.VOLCENGINE_API_KEY || "";
+const VOLCENGINE_RESOURCE_ID = process.env.VOLCENGINE_RESOURCE_ID || "volc.seedasr.auc";
 
-console.log(`[asr] Provider: external (${ASR_BASE_URL}, model: ${ASR_MODEL})`);
+const SUBMIT_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit";
+const QUERY_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query";
 
-// External ASR client (lazy init)
-let asrClient: OpenAI | null = null;
-
-function getASRClient(): OpenAI {
-  if (!asrClient) {
-    if (!ASR_API_KEY) {
-      throw new Error("未配置 ASR_API_KEY 环境变量。请在 Railway 中配置 ASR_API_KEY（推荐使用 Groq 免费 Whisper API）");
-    }
-    asrClient = new OpenAI({
-      apiKey: ASR_API_KEY,
-      baseURL: ASR_BASE_URL,
-      timeout: 60_000,
-      maxRetries: 2,
-    });
-  }
-  return asrClient;
-}
+console.log(`[asr] Provider: Volcengine Doubao (resource: ${VOLCENGINE_RESOURCE_ID})`);
 
 export interface ASRResult {
   text: string;
 }
 
-// 根据文件扩展名映射 Groq Whisper 能识别的标准 MIME 类型
-function normalizeAudioMimeType(fileName: string, fallbackMimeType: string): string {
-  const ext = fileName.toLowerCase().split('.').pop() || '';
-  const mimeMap: Record<string, string> = {
-    'm4a': 'audio/m4a',
-    'mp3': 'audio/mpeg',
-    'mp4': 'audio/mp4',
-    'wav': 'audio/wav',
-    'flac': 'audio/flac',
-    'ogg': 'audio/ogg',
-    'opus': 'audio/opus',
-    'webm': 'audio/webm',
-    'mpeg': 'audio/mpeg',
+// 根据文件扩展名判断音频格式
+function getAudioFormat(fileName: string): string {
+  const ext = fileName.toLowerCase().split(".").pop() || "";
+  const formatMap: Record<string, string> = {
+    mp3: "mp3",
+    wav: "wav",
+    ogg: "ogg",
+    raw: "raw",
+    pcm: "raw",
+    m4a: "mp4",
+    mp4: "mp4",
+    aac: "aac",
   };
-  return mimeMap[ext] || fallbackMimeType;
+  return formatMap[ext] || ext;
 }
 
-// 确保文件名有扩展名（Expo 录音 URI 可能不带扩展名）
+// 确保文件名有扩展名
 function ensureFileExtension(fileName: string, mimeType: string): string {
-  const hasExtension = fileName.includes('.');
+  const hasExtension = fileName.includes(".");
   if (hasExtension) return fileName;
 
   const mimeToExt: Record<string, string> = {
-    'audio/m4a': '.m4a',
-    'audio/mpeg': '.mp3',
-    'audio/mp4': '.mp4',
-    'audio/wav': '.wav',
-    'audio/flac': '.flac',
-    'audio/ogg': '.ogg',
-    'audio/opus': '.opus',
-    'audio/webm': '.webm',
-    'audio/x-m4a': '.m4a',
+    "audio/m4a": ".m4a",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/ogg": ".ogg",
+    "audio/opus": ".opus",
+    "audio/webm": ".webm",
+    "audio/x-m4a": ".m4a",
   };
-  const ext = mimeToExt[mimeType] || '.m4a';
+  const ext = mimeToExt[mimeType] || ".m4a";
   return fileName + ext;
 }
 
 /**
- * 直接从音频 Buffer 转录（无需 R2 存储）
+ * 使用 ffmpeg 将音频转码为 MP3
+ */
+async function convertToMp3(inputBuffer: Buffer, inputFormat: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-i", "pipe:0",
+      "-ar", "16000",
+      "-ac", "1",
+      "-b:a", "32k",
+      "-f", "mp3",
+      "pipe:1",
+    ], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => errChunks.push(chunk));
+
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        const errMsg = Buffer.concat(errChunks).toString("utf-8");
+        reject(new Error(`ffmpeg 转码失败 (exit ${code}): ${errMsg}`));
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    ffmpeg.on("error", (err) => reject(err));
+    ffmpeg.stdin.write(inputBuffer);
+    ffmpeg.stdin.end();
+  });
+}
+
+/**
+ * 上传音频到 R2 并获取临时 URL
+ */
+async function uploadAudioToR2(audioBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
+  const key = await uploadFile({
+    fileContent: audioBuffer,
+    fileName: `asr-temp/${Date.now()}-${fileName}`,
+    contentType: mimeType,
+  });
+
+  // 生成 10 分钟有效期的预签名 URL
+  const url = await generatePresignedUrl({ key, expireTime: 600 });
+
+  // 调度清理（识别完成后删除）
+  return url;
+}
+
+/**
+ * 从 R2 URL 中提取 key
+ */
+function extractKeyFromUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split("/");
+    // pathname 格式: /asr-temp/1234567890-recording.m4a
+    if (pathParts.length >= 3 && pathParts[1] === "asr-temp") {
+      return pathParts.slice(1).join("/");
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * 提交火山引擎 ASR 任务
+ */
+async function submitTask(audioUrl: string, format: string, taskId: string): Promise<void> {
+  const body = {
+    user: { uid: "dream-discover-user" },
+    audio: {
+      format,
+      url: audioUrl,
+    },
+    request: {
+      model_name: "bigmodel",
+      enable_itn: true,
+      enable_punc: true,
+    },
+  };
+
+  const response = await fetch(SUBMIT_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": VOLCENGINE_API_KEY,
+      "X-Api-Resource-Id": VOLCENGINE_RESOURCE_ID,
+      "X-Api-Request-Id": taskId,
+      "X-Api-Sequence": "-1",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`ASR 任务提交失败: HTTP ${response.status}, ${text}`);
+  }
+
+  const statusCode = response.headers.get("X-Api-Status-Code");
+  const statusMsg = response.headers.get("X-Api-Message");
+  if (statusCode && statusCode !== "20000000") {
+    throw new Error(`ASR 任务提交失败: ${statusCode} ${statusMsg}`);
+  }
+}
+
+/**
+ * 查询火山引擎 ASR 任务结果
+ */
+async function queryTask(taskId: string): Promise<{ done: boolean; text?: string; code: string; message?: string }> {
+  const response = await fetch(QUERY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": VOLCENGINE_API_KEY,
+      "X-Api-Resource-Id": VOLCENGINE_RESOURCE_ID,
+      "X-Api-Request-Id": taskId,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`ASR 任务查询失败: HTTP ${response.status}, ${text}`);
+  }
+
+  const data = await response.json() as any;
+  const statusCode = response.headers.get("X-Api-Status-Code") || "";
+
+  // 20000000 = 成功, 20000001 = 处理中, 20000002 = 队列中
+  if (statusCode === "20000000") {
+    const resultText = data.result?.text || "";
+    return { done: true, text: resultText, code: statusCode };
+  }
+
+  if (statusCode === "20000003") {
+    // 静音音频
+    return { done: true, text: "", code: statusCode, message: "未检测到人声" };
+  }
+
+  if (statusCode === "45000002") {
+    // 空音频
+    return { done: true, text: "", code: statusCode, message: "空音频" };
+  }
+
+  // 仍在处理中
+  return { done: false, code: statusCode, message: data.message || "处理中" };
+}
+
+/**
+ * 直接从音频 Buffer 转录（无需长期存储）
  * 推荐用于外部部署环境
  */
-export async function transcribeBuffer(audioBuffer: Buffer, fileName: string = "recording.m4a", mimeType: string = "audio/m4a"): Promise<ASRResult> {
-  const safeFileName = ensureFileExtension(fileName, mimeType);
-  const normalizedMime = normalizeAudioMimeType(safeFileName, mimeType);
-  console.log(`[asr] Transcribing file: ${fileName} -> ${safeFileName}, mime: ${mimeType} -> ${normalizedMime}, size: ${audioBuffer.length} bytes`);
+export async function transcribeBuffer(
+  audioBuffer: Buffer,
+  fileName: string = "recording.m4a",
+  mimeType: string = "audio/m4a"
+): Promise<ASRResult> {
+  if (!VOLCENGINE_API_KEY) {
+    throw new Error("未配置 VOLCENGINE_API_KEY 环境变量。请在 Railway 中配置火山引擎 API Key");
+  }
 
-  const uint8Array = new Uint8Array(audioBuffer);
-  const file = new File([uint8Array], safeFileName, { type: normalizedMime });
+  const safeFileName = ensureFileExtension(fileName, mimeType);
+  const originalFormat = getAudioFormat(safeFileName);
+  console.log(`[asr] Transcribing file: ${fileName} -> ${safeFileName}, format: ${originalFormat}, size: ${audioBuffer.length} bytes`);
+
+  let processedBuffer = audioBuffer;
+  let outputFormat = originalFormat;
+  let outputMimeType = mimeType;
+
+  // 火山引擎大模型录音文件识别支持的格式: raw / wav / mp3 / ogg
+  // M4A/MP4/AAC 需要转码为 MP3
+  const supportedFormats = ["mp3", "wav", "ogg", "raw"];
+  if (!supportedFormats.includes(originalFormat)) {
+    console.log(`[asr] Format ${originalFormat} not supported by Volcengine, converting to MP3 via ffmpeg...`);
+    try {
+      processedBuffer = await convertToMp3(audioBuffer, originalFormat);
+      outputFormat = "mp3";
+      outputMimeType = "audio/mpeg";
+      console.log(`[asr] Converted to MP3, new size: ${processedBuffer.length} bytes`);
+    } catch (err: any) {
+      console.error(`[asr] ffmpeg conversion failed: ${err.message}`);
+      throw new Error(`音频格式转换失败: ${err.message}。请确保服务器已安装 ffmpeg。`);
+    }
+  }
+
+  let r2Url: string | null = null;
+  const taskId = crypto.randomUUID();
 
   try {
-    const transcriptionParams: Record<string, any> = {
-      model: ASR_MODEL,
-      file,
-      language: "zh",
-      response_format: "text",
-      prompt: "以下是中文语音转文字内容：",
-      temperature: 0.0,
-    };
+    // 1. 上传音频到 R2 获取临时 URL
+    const tempFileName = safeFileName.replace(/\.[^.]+$/, `.${outputFormat}`);
+    r2Url = await uploadAudioToR2(processedBuffer, tempFileName, outputMimeType);
+    console.log(`[asr] Uploaded to R2, temp URL: ${r2Url.substring(0, 80)}...`);
 
-    const transcription = await getASRClient().audio.transcriptions.create(
-      transcriptionParams as any
-    );
+    // 2. 提交识别任务
+    await submitTask(r2Url, outputFormat, taskId);
+    console.log(`[asr] Task submitted, id: ${taskId}`);
 
-    let text = "";
-    if (typeof transcription === "string") {
-      text = transcription;
-    } else if ((transcription as any).text) {
-      text = (transcription as any).text;
-    } else if (Array.isArray((transcription as any).segments)) {
-      text = (transcription as any).segments
-        .map((s: any) => s.text || "")
-        .join("")
-        .trim();
-    }
+    // 3. 轮询查询结果（最多 60 秒）
+    const maxWaitMs = 60_000;
+    const pollIntervalMs = 1_500;
+    const startTime = Date.now();
 
-    // 过滤掉 Whisper 常见的幻觉文本
-    const hallucinationPatterns = [
-      "请不吝点赞",
-      "订阅 转发",
-      "大赏支持",
-      "感谢收看",
-      "谢谢观看",
-      "字幕制作",
-      "仅供参考",
-    ];
-    for (const pattern of hallucinationPatterns) {
-      if (text.includes(pattern)) {
-        if (text.length < 200) {
-          console.log(`[asr] Detected hallucination pattern "${pattern}", discarding result: "${text.substring(0, 100)}"`);
-          text = "";
-          break;
-        }
-        text = text.split(/[。！？；\n]/).filter(sentence => !hallucinationPatterns.some(p => sentence.includes(p))).join("。").trim();
+    while (Date.now() - startTime < maxWaitMs) {
+      await sleep(pollIntervalMs);
+      const result = await queryTask(taskId);
+      console.log(`[asr] Poll result: code=${result.code}, done=${result.done}`);
+
+      if (result.done) {
+        let text = result.text || "";
+
+        // 火山引擎基本无中文幻觉，但保留过滤逻辑作为兜底
+        text = filterHallucinations(text);
+
+        console.log(`[asr] Recognition complete, text length: ${text.length}`);
+        return { text };
       }
     }
 
-    return { text };
+    throw new Error("ASR 识别超时，请稍后重试");
   } catch (error: any) {
     console.error("[asr] Transcription error:", error.message);
     throw new Error(`语音识别失败: ${error.message}`);
+  } finally {
+    // 4. 清理 R2 临时文件
+    if (r2Url) {
+      const key = extractKeyFromUrl(r2Url);
+      if (key) {
+        try {
+          await deleteFile({ key });
+          console.log(`[asr] Cleaned up R2 temp file: ${key}`);
+        } catch (e: any) {
+          console.warn(`[asr] Failed to cleanup R2 file: ${e.message}`);
+        }
+      }
+    }
   }
 }
 
@@ -165,4 +326,39 @@ export async function recognize(params: {
   }
 
   return transcribeBuffer(audioBuffer, fileName);
+}
+
+/**
+ * 过滤 ASR 常见幻觉文本
+ */
+function filterHallucinations(text: string): string {
+  const hallucinationPatterns = [
+    "请不吝点赞",
+    "订阅 转发",
+    "大赏支持",
+    "感谢收看",
+    "谢谢观看",
+    "字幕制作",
+    "仅供参考",
+  ];
+
+  for (const pattern of hallucinationPatterns) {
+    if (text.includes(pattern)) {
+      if (text.length < 200) {
+        console.log(`[asr] Detected hallucination pattern "${pattern}", discarding result`);
+        return "";
+      }
+      text = text
+        .split(/[。！？；\n]/)
+        .filter((sentence) => !hallucinationPatterns.some((p) => sentence.includes(p)))
+        .join("。")
+        .trim();
+    }
+  }
+
+  return text;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

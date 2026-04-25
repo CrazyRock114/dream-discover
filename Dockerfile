@@ -1,7 +1,10 @@
 FROM node:20-slim
 
+# Install ffmpeg for audio transcoding
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # Force cache bust - increment this value to invalidate Docker build cache
-ARG CACHE_BUST=17
+ARG CACHE_BUST=18
 
 WORKDIR /app
 
