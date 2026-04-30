@@ -1,20 +1,18 @@
 /**
  * ASR (Automatic Speech Recognition) Client
  *
- * 使用火山引擎豆包语音 - 大模型录音文件识别 API v3
- * 流程：音频 buffer → ffmpeg 转码(MP3) → R2 临时存储 → 提交识别任务 → 轮询结果
+ * 使用火山引擎豆包语音 - 大模型录音文件识别极速版 API
+ * 流程：音频 buffer → ffmpeg 转码(MP3) → base64 → 极速版识别 → 直接返回结果
  */
 import { spawn } from "child_process";
-import { promisify } from "util";
-import { readFile as readFromStorage, uploadFile, deleteFile, generatePresignedUrl } from "./r2-storage.js";
+import { readFile as readFromStorage } from "./r2-storage.js";
 
 const VOLCENGINE_API_KEY = process.env.VOLCENGINE_API_KEY || "";
-const VOLCENGINE_RESOURCE_ID = process.env.VOLCENGINE_RESOURCE_ID || "volc.seedasr.auc";
+const VOLCENGINE_RESOURCE_ID = process.env.VOLCENGINE_RESOURCE_ID || "volc.bigasr.auc_turbo";
 
-const SUBMIT_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit";
-const QUERY_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query";
+const FLASH_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash";
 
-console.log(`[asr] Provider: Volcengine Doubao (resource: ${VOLCENGINE_RESOURCE_ID})`);
+console.log(`[asr] Provider: Volcengine Doubao Flash (resource: ${VOLCENGINE_RESOURCE_ID})`);
 
 export interface ASRResult {
   text: string;
@@ -93,68 +91,13 @@ async function convertToMp3(inputBuffer: Buffer, inputFormat: string): Promise<B
 }
 
 /**
- * 上传音频到 R2 并获取临时 URL
+ * 调用火山引擎极速版 ASR 接口
  */
-async function uploadAudioToR2(audioBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
-  let key: string;
-  try {
-    key = await uploadFile({
-      fileContent: audioBuffer,
-      fileName: `asr-temp/${Date.now()}-${fileName}`,
-      contentType: mimeType,
-    });
-    console.log(`[asr] Uploaded to R2, key: ${key}`);
-  } catch (err: any) {
-    console.error(`[asr] R2 upload failed: ${err.message}`);
-    throw new Error(`音频临时存储失败: ${err.message}`);
-  }
-
-  // 生成 10 分钟有效期的预签名 URL
-  try {
-    const url = await generatePresignedUrl({ key, expireTime: 600 });
-    console.log(`[asr] Generated presigned URL: ${url.substring(0, 120)}...`);
-    return url;
-  } catch (err: any) {
-    console.error(`[asr] Generate presigned URL failed: ${err.message}`);
-    throw new Error(`生成音频访问链接失败: ${err.message}`);
-  }
-}
-
-/**
- * 从 R2 URL 中提取 key
- * 支持两种格式:
- * - 公开/自定义域名: /asr-temp/123-file.mp3
- * - S3 预签名 URL: /bucket-name/asr-temp/123-file.mp3
- */
-function extractKeyFromUrl(url: string): string | null {
-  try {
-    const urlObj = new URL(url);
-    const pathParts = urlObj.pathname.split("/").filter(Boolean);
-
-    // 格式1: /asr-temp/123-file.mp3 (公开URL)
-    if (pathParts.length >= 2 && pathParts[0] === "asr-temp") {
-      return pathParts.join("/");
-    }
-
-    // 格式2: /bucket-name/asr-temp/123-file.mp3 (S3预签名URL)
-    if (pathParts.length >= 3 && pathParts[1] === "asr-temp") {
-      return pathParts.slice(1).join("/");
-    }
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-/**
- * 提交火山引擎 ASR 任务
- */
-async function submitTask(audioUrl: string, format: string, taskId: string): Promise<void> {
+async function flashRecognize(audioBase64: string, format: string, taskId: string): Promise<string> {
   const body = {
     user: { uid: "dream-discover-user" },
     audio: {
-      format,
-      url: audioUrl,
+      data: audioBase64,
     },
     request: {
       model_name: "bigmodel",
@@ -163,7 +106,7 @@ async function submitTask(audioUrl: string, format: string, taskId: string): Pro
     },
   };
 
-  const response = await fetch(SUBMIT_URL, {
+  const response = await fetch(FLASH_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -177,62 +120,35 @@ async function submitTask(audioUrl: string, format: string, taskId: string): Pro
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`ASR 任务提交失败: HTTP ${response.status}, ${text}`);
+    throw new Error(`ASR 请求失败: HTTP ${response.status}, ${text}`);
   }
 
-  const statusCode = response.headers.get("X-Api-Status-Code");
-  const statusMsg = response.headers.get("X-Api-Message");
-  if (statusCode && statusCode !== "20000000") {
-    throw new Error(`ASR 任务提交失败: ${statusCode} ${statusMsg}`);
-  }
-}
-
-/**
- * 查询火山引擎 ASR 任务结果
- */
-async function queryTask(taskId: string): Promise<{ done: boolean; text?: string; code: string; message?: string }> {
-  const response = await fetch(QUERY_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Api-Key": VOLCENGINE_API_KEY,
-      "X-Api-Resource-Id": VOLCENGINE_RESOURCE_ID,
-      "X-Api-Request-Id": taskId,
-    },
-    body: JSON.stringify({}),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`ASR 任务查询失败: HTTP ${response.status}, ${text}`);
-  }
-
-  const data = await response.json() as any;
   const statusCode = response.headers.get("X-Api-Status-Code") || "";
-
-  // 20000000 = 成功, 20000001 = 处理中, 20000002 = 队列中
-  if (statusCode === "20000000") {
-    const resultText = data.result?.text || "";
-    return { done: true, text: resultText, code: statusCode };
-  }
+  const statusMsg = response.headers.get("X-Api-Message") || "";
 
   if (statusCode === "20000003") {
     // 静音音频
-    return { done: true, text: "", code: statusCode, message: "未检测到人声" };
+    console.log("[asr] Flash result: 未检测到人声");
+    return "";
   }
 
   if (statusCode === "45000002") {
     // 空音频
-    return { done: true, text: "", code: statusCode, message: "空音频" };
+    console.log("[asr] Flash result: 空音频");
+    return "";
   }
 
-  // 仍在处理中
-  return { done: false, code: statusCode, message: data.message || "处理中" };
+  if (statusCode !== "20000000") {
+    throw new Error(`ASR 识别失败: ${statusCode} ${statusMsg}`);
+  }
+
+  const data = await response.json() as any;
+  const resultText = data.result?.text || "";
+  return resultText;
 }
 
 /**
  * 直接从音频 Buffer 转录（无需长期存储）
- * 推荐用于外部部署环境
  */
 export async function transcribeBuffer(
   audioBuffer: Buffer,
@@ -249,17 +165,15 @@ export async function transcribeBuffer(
 
   let processedBuffer = audioBuffer;
   let outputFormat = originalFormat;
-  let outputMimeType = mimeType;
 
-  // 火山引擎大模型录音文件识别标准版 volc.seedasr.auc 支持的格式: raw / wav / mp3 / ogg
-  // m4a/mp4/aac 等格式需要先转码为 MP3，详见 https://www.volcengine.com/docs/6561/1354868
-  const supportedFormats = ["mp3", "wav", "ogg", "raw"];
+  // 极速版支持格式: wav / mp3 / ogg
+  // m4a/mp4/aac 需要先转码为 MP3
+  const supportedFormats = ["mp3", "wav", "ogg"];
   if (!supportedFormats.includes(originalFormat)) {
-    console.log(`[asr] Format ${originalFormat} not supported by Volcengine, converting to MP3 via ffmpeg...`);
+    console.log(`[asr] Format ${originalFormat} not supported by Volcengine Flash, converting to MP3 via ffmpeg...`);
     try {
       processedBuffer = await convertToMp3(audioBuffer, originalFormat);
       outputFormat = "mp3";
-      outputMimeType = "audio/mpeg";
       console.log(`[asr] Converted to MP3, new size: ${processedBuffer.length} bytes`);
     } catch (err: any) {
       console.error(`[asr] ffmpeg conversion failed: ${err.message}`);
@@ -267,60 +181,21 @@ export async function transcribeBuffer(
     }
   }
 
-  let r2Url: string | null = null;
   const taskId = crypto.randomUUID();
+  const startTime = Date.now();
 
   try {
-    // 1. 上传音频到 R2 获取临时 URL
-    const tempFileName = safeFileName.replace(/\.[^.]+$/, `.${outputFormat}`);
-    r2Url = await uploadAudioToR2(processedBuffer, tempFileName, outputMimeType);
-    console.log(`[asr] Uploaded to R2, temp URL: ${r2Url.substring(0, 80)}...`);
+    const audioBase64 = processedBuffer.toString("base64");
+    const text = await flashRecognize(audioBase64, outputFormat, taskId);
+    const elapsed = Date.now() - startTime;
 
-    // 2. 提交识别任务
-    await submitTask(r2Url, outputFormat, taskId);
-    console.log(`[asr] Task submitted, id: ${taskId}`);
-
-    // 3. 轮询查询结果（最多 120 秒）
-    const maxWaitMs = 120_000;
-    const pollIntervalMs = 500; // 0.5s 轮询，减少等待
-    const startTime = Date.now();
-    let pollCount = 0;
-
-    while (Date.now() - startTime < maxWaitMs) {
-      await sleep(pollIntervalMs);
-      pollCount++;
-      const result = await queryTask(taskId);
-      const elapsed = Date.now() - startTime;
-      console.log(`[asr] Poll #${pollCount} (${elapsed}ms): code=${result.code}, done=${result.done}`);
-
-      if (result.done) {
-        let text = result.text || "";
-
-        // 火山引擎基本无中文幻觉，但保留过滤逻辑作为兜底
-        text = filterHallucinations(text);
-
-        console.log(`[asr] Recognition complete in ${elapsed}ms, text length: ${text.length}`);
-        return { text };
-      }
-    }
-
-    throw new Error(`ASR 识别超时（已等待 ${Math.round((Date.now() - startTime) / 1000)} 秒），请缩短语音后重试`);
+    const filteredText = filterHallucinations(text);
+    console.log(`[asr] Flash recognition complete in ${elapsed}ms, text length: ${filteredText.length}`);
+    return { text: filteredText };
   } catch (error: any) {
-    console.error("[asr] Transcription error:", error.message);
+    const elapsed = Date.now() - startTime;
+    console.error(`[asr] Flash transcription error after ${elapsed}ms:`, error.message);
     throw new Error(`语音识别失败: ${error.message}`);
-  } finally {
-    // 4. 清理 R2 临时文件
-    if (r2Url) {
-      const key = extractKeyFromUrl(r2Url);
-      if (key) {
-        try {
-          await deleteFile({ key });
-          console.log(`[asr] Cleaned up R2 temp file: ${key}`);
-        } catch (e: any) {
-          console.warn(`[asr] Failed to cleanup R2 file: ${e.message}`);
-        }
-      }
-    }
   }
 }
 
@@ -380,8 +255,4 @@ function filterHallucinations(text: string): string {
   }
 
   return text;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
