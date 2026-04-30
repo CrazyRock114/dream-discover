@@ -29,7 +29,7 @@ function getAudioFormat(fileName: string): string {
     ogg: "ogg",
     raw: "raw",
     pcm: "raw",
-    m4a: "mp4",
+    m4a: "m4a",
     mp4: "mp4",
     aac: "aac",
   };
@@ -253,7 +253,7 @@ export async function transcribeBuffer(
 
   // 火山引擎大模型录音文件识别 v3 支持的格式: raw / wav / mp3 / ogg / mp4(m4a) / aac
   // opus / amr / pcm 也可以直接提交，详见官方文档
-  const supportedFormats = ["mp3", "wav", "ogg", "raw", "mp4", "aac"];
+  const supportedFormats = ["mp3", "wav", "ogg", "raw", "m4a", "aac"];
   if (!supportedFormats.includes(originalFormat)) {
     console.log(`[asr] Format ${originalFormat} not supported by Volcengine, converting to MP3 via ffmpeg...`);
     try {
