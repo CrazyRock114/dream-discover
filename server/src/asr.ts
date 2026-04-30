@@ -251,9 +251,9 @@ export async function transcribeBuffer(
   let outputFormat = originalFormat;
   let outputMimeType = mimeType;
 
-  // 火山引擎大模型录音文件识别支持的格式: raw / wav / mp3 / ogg
-  // M4A/MP4/AAC 需要转码为 MP3
-  const supportedFormats = ["mp3", "wav", "ogg", "raw"];
+  // 火山引擎大模型录音文件识别 v3 支持的格式: raw / wav / mp3 / ogg / mp4(m4a) / aac
+  // opus / amr / pcm 也可以直接提交，详见官方文档
+  const supportedFormats = ["mp3", "wav", "ogg", "raw", "mp4", "aac"];
   if (!supportedFormats.includes(originalFormat)) {
     console.log(`[asr] Format ${originalFormat} not supported by Volcengine, converting to MP3 via ffmpeg...`);
     try {

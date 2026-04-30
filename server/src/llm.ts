@@ -34,7 +34,7 @@ function getOpenAIClient(): OpenAI {
       throw new Error("未配置 LLM API Key，请设置 LLM_API_KEY 或 DEEPSEEK_API_KEY 环境变量");
     }
     console.log(`[llm] OpenAI client baseURL: ${baseURL}, model: ${LLM_MODEL}`);
-    openaiClient = new OpenAI({ apiKey, baseURL, timeout: 120_000, maxRetries: 2 });
+    openaiClient = new OpenAI({ apiKey, baseURL, timeout: 120_000, maxRetries: 1 });
   }
   return openaiClient;
 }
