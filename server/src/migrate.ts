@@ -234,6 +234,25 @@ export async function runMigration(): Promise<void> {
     } catch (err: any) {
       console.error("[migrate] RLS policy migration FAILED:", err.message);
     }
+
+    // 诊断信息：确认服务端连接角色在 RLS 下的行为。
+    // 若 rolbypassrls 为 true（或该角色是表属主），RLS 策略对服务端不生效，
+    // 策略只约束 PostgREST 的 anon / authenticated 角色 —— 这正是预期。
+    try {
+      const [roleInfo] = await sql.unsafe(
+        `SELECT current_user AS role,
+                r.rolbypassrls AS bypass_rls,
+                (SELECT count(*)::int FROM pg_class c
+                   JOIN pg_roles o ON o.oid = c.relowner
+                  WHERE c.relname = 'dreamdis_dreams' AND o.rolname = current_user) AS is_owner
+           FROM pg_roles r WHERE r.rolname = current_user`
+      );
+      console.log(
+        `[migrate] DB role=${roleInfo?.role} bypass_rls=${roleInfo?.bypass_rls} is_table_owner=${roleInfo?.is_owner}`
+      );
+    } catch (err: any) {
+      console.warn("[migrate] Could not read DB role info:", err.message);
+    }
   } catch (err: any) {
     console.error("[migrate] Migration failed:", err.message);
     // Don't throw - allow server to start anyway
