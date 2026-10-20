@@ -90,6 +90,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${data.token}`,
+            // 服务端以该请求头为准确定要迁移的设备，不信任 body 里的 device_id
+            'x-device-id': deviceId,
           },
           body: JSON.stringify({ device_id: deviceId }),
         });

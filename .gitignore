@@ -13,3 +13,4 @@ node-compile-cache/
 .env
 .env.local
 .env.*.local
+.scratch/
