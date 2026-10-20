@@ -9,7 +9,7 @@
     "install-missing": "node ./scripts/install-missing-deps.js",
     "lint": "tsc --noEmit && eslint ./ -f compact --quiet",
     "start": "expo start --web --clear",
-    "test": "jest --watchAll"
+    "test": "jest --ci"
   },
   "jest": {
     "preset": "jest-expo"

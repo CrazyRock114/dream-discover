@@ -48,8 +48,11 @@ const AUTH_TOKEN_KEY = '@dreamdiscover:auth_token';
 
 /**
  * 获取带 device_id 和 auth token 的 headers
+ *
+ * 服务端所有资源接口都会校验归属（device_id / user_id），
+ * 因此 SSE 流式请求也必须携带这些头 —— 见 `client/utils/sse.ts`。
  */
-async function getHeaders(): Promise<Record<string, string>> {
+export async function getHeaders(): Promise<Record<string, string>> {
   const deviceId = await getDeviceId();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

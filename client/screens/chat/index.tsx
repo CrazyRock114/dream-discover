@@ -14,8 +14,8 @@ import { Screen } from '@/components/Screen';
 import { FontAwesome6 } from '@expo/vector-icons';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { Image } from 'expo-image';
-import RNSSE from 'react-native-sse';
-import { fetchDream, fetchMessages, type Dream } from '@/utils/api';
+import { fetchDream, fetchMessages, getHeaders, type Dream } from '@/utils/api';
+import { connectSSE } from '@/utils/sse';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { Toast, useToast } from '@/components/Toast';
 
@@ -41,92 +41,6 @@ interface ChatMessage {
   streaming?: boolean;
 }
 
-/**
- * 统一的 SSE 连接函数，兼容 Web 和 Native
- */
-function connectSSE(
-  url: string,
-  body: object,
-  onMessage: (data: string) => void,
-  onDone: () => void,
-  onError: (err: any) => void
-): { close: () => void } {
-  if (Platform.OS === 'web') {
-    const controller = new AbortController();
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          onError(new Error(`HTTP ${response.status}`));
-          return;
-        }
-        const reader = (response as any).body?.getReader();
-        if (!reader) {
-          const text = await response.text();
-          const lines = text.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') { onDone(); return; }
-              onMessage(data);
-            }
-          }
-          onDone();
-          return;
-        }
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') { onDone(); return; }
-              onMessage(data);
-            }
-          }
-        }
-        onDone();
-      })
-      .catch((err) => {
-        if (err.name !== 'AbortError') onError(err);
-      });
-
-    return { close: () => controller.abort() };
-  }
-
-  // Native: use react-native-sse
-  const sse = new RNSSE(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  sse.addEventListener('message', (event: any) => {
-    if (!event.data || event.data === '[DONE]') {
-      onDone();
-      sse.close();
-      return;
-    }
-    onMessage(event.data);
-  });
-
-  sse.addEventListener('error', () => {
-    onError(new Error('SSE connection error'));
-    sse.close();
-  });
-
-  return { close: () => sse.close() };
-}
-
 export default function ChatScreen() {
   const router = useSafeRouter();
   const params = useSafeSearchParams<{ dreamId: number; interpreter: string }>();
@@ -142,6 +56,8 @@ export default function ChatScreen() {
   const [verboseMode, setVerboseMode] = useState(true); // true = 详细, false = 精简
   const flatListRef = useRef<FlatList>(null);
   const sseCloseRef = useRef<(() => void) | null>(null);
+  // 组件卸载后，避免 await headers 期间建立起的 SSE 连接泄漏
+  const isMountedRef = useRef(true);
 
   const { toast, showToast, dismissToast } = useToast();
   const {
@@ -173,7 +89,7 @@ export default function ChatScreen() {
 
   // Start interpretation via SSE
   const startInterpretation = useCallback(
-    (dId: number, interp: string, mode: string) => {
+    async (dId: number, interp: string, mode: string) => {
       setIsStreaming(true);
       const assistantMsgId = `stream-${Date.now()}`;
       setMessages([
@@ -187,35 +103,49 @@ export default function ChatScreen() {
        */
       const url = `${BASE_URL}/api/v1/dreams/${dId}/interpret`;
 
-      const conn = connectSSE(
-        url,
-        { interpreter: interp, mode },
-        (data) => {
-          handleSSEData(assistantMsgId, data);
-        },
-        () => {
-          setIsStreaming(false);
-          setMessages(prev =>
-            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-          );
-          sseCloseRef.current = null;
-        },
-        () => {
-          setIsStreaming(false);
-          showToast('连接解梦师失败，请重试', 'error');
-          setMessages(prev =>
-            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-          );
-          sseCloseRef.current = null;
-        }
-      );
-      sseCloseRef.current = conn.close;
+      try {
+        // 必须携带 x-device-id 与 Authorization —— 服务端会校验梦境归属
+        const headers = await getHeaders();
+        if (!isMountedRef.current) return;
+
+        const conn = connectSSE(
+          url,
+          { interpreter: interp, mode },
+          headers,
+          (data) => {
+            handleSSEData(assistantMsgId, data);
+          },
+          () => {
+            setIsStreaming(false);
+            setMessages(prev =>
+              prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+            );
+            sseCloseRef.current = null;
+          },
+          () => {
+            setIsStreaming(false);
+            showToast('连接解梦师失败，请重试', 'error');
+            setMessages(prev =>
+              prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+            );
+            sseCloseRef.current = null;
+          }
+        );
+        sseCloseRef.current = conn.close;
+      } catch {
+        if (!isMountedRef.current) return;
+        setIsStreaming(false);
+        showToast('连接解梦师失败，请重试', 'error');
+        setMessages(prev =>
+          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+        );
+      }
     },
     [handleSSEData, showToast]
   );
 
   // Send follow-up message via SSE
-  const sendMessage = useCallback(() => {
+  const sendMessage = useCallback(async () => {
     if (!inputText.trim() || !dreamId || isStreaming) return;
 
     const msg = inputText.trim();
@@ -241,27 +171,41 @@ export default function ChatScreen() {
      */
     const url = `${BASE_URL}/api/v1/dreams/${dreamId}/chat`;
     const currentMode = verboseMode ? 'verbose' : 'concise';
-    const conn = connectSSE(
-      url,
-      { message: msg, interpreter: interpreterStr, mode: currentMode },
-      (data) => handleSSEData(assistantMsgId, data),
-      () => {
-        setIsStreaming(false);
-        setMessages(prev =>
-          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-        );
-        sseCloseRef.current = null;
-      },
-      () => {
-        setIsStreaming(false);
-        showToast('发送消息失败，请重试', 'error');
-        setMessages(prev =>
-          prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
-        );
-        sseCloseRef.current = null;
-      }
-    );
-    sseCloseRef.current = conn.close;
+    try {
+      // 必须携带 x-device-id 与 Authorization —— 服务端会校验梦境归属
+      const headers = await getHeaders();
+      if (!isMountedRef.current) return;
+
+      const conn = connectSSE(
+        url,
+        { message: msg, interpreter: interpreterStr, mode: currentMode },
+        headers,
+        (data) => handleSSEData(assistantMsgId, data),
+        () => {
+          setIsStreaming(false);
+          setMessages(prev =>
+            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+          );
+          sseCloseRef.current = null;
+        },
+        () => {
+          setIsStreaming(false);
+          showToast('发送消息失败，请重试', 'error');
+          setMessages(prev =>
+            prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+          );
+          sseCloseRef.current = null;
+        }
+      );
+      sseCloseRef.current = conn.close;
+    } catch {
+      if (!isMountedRef.current) return;
+      setIsStreaming(false);
+      showToast('发送消息失败，请重试', 'error');
+      setMessages(prev =>
+        prev.map(m => (m.id === assistantMsgId ? { ...m, streaming: false } : m))
+      );
+    }
   }, [inputText, dreamId, interpreterStr, isStreaming, verboseMode, handleSSEData, showToast]);
 
   // Voice input handler
@@ -314,7 +258,7 @@ export default function ChatScreen() {
 
         // If no messages yet, start interpretation
         if (chatMsgs.length === 0) {
-          startInterpretation(dreamId, interpreterStr, verboseMode ? 'verbose' : 'concise');
+          await startInterpretation(dreamId, interpreterStr, verboseMode ? 'verbose' : 'concise');
         } else {
           setMessages(chatMsgs);
         }
@@ -331,6 +275,7 @@ export default function ChatScreen() {
   // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       if (sseCloseRef.current) {
         sseCloseRef.current();
         sseCloseRef.current = null;

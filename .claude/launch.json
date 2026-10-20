@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dream-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8081"],
+      "cwd": "./client",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_BASE_URL": "http://localhost:9091"
+      },
+      "port": 8081
+    }
+  ]
+}

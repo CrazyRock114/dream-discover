@@ -11,7 +11,10 @@
     "preinstall": "npx only-allow pnpm",
     "lint:client": "cd client && pnpm run lint",
     "lint:server": "cd server && pnpm run lint",
-    "lint:all": "pnpm run lint:client && pnpm run lint:server"
+    "lint:all": "pnpm run lint:client && pnpm run lint:server",
+    "test:client": "cd client && pnpm run test",
+    "test:server": "cd server && pnpm run test",
+    "test": "pnpm run test:server && pnpm run test:client"
   },
   "dependencies": {},
   "devDependencies": {},

@@ -7,7 +7,8 @@
     "dev": "NODE_ENV=development PORT=9091 npx tsx watch ./src/index.ts",
     "preinstall": "npx only-allow pnpm",
     "start": "NODE_ENV=production node dist/index.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "sh -c 'files=$(find src -name \"*.test.ts\" -type f | sort); if [ -z \"$files\" ]; then echo \"no test files found under server/src\" >&2; exit 1; fi; tsx --test $files'"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1032.0",

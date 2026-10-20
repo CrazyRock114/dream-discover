@@ -57,6 +57,7 @@ export async function getDb(): Promise<ReturnType<typeof postgres>> {
 export interface DreamRow {
   id: number;
   device_id: string;
+  user_id: string | null;
   content: string;
   audio_key: string | null;
   interpreter: string | null;
@@ -99,7 +100,7 @@ export async function findDreamsByDeviceId(opts: {
   if (opts.cursor) {
     if (opts.mood) {
       return db.unsafe(`
-        SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+        SELECT id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
         FROM dreamdis_dreams
         WHERE ${idColumn} = $1 AND mood = $2 AND created_at < $3
         ORDER BY created_at DESC
@@ -107,7 +108,7 @@ export async function findDreamsByDeviceId(opts: {
       `, [idValue, opts.mood, opts.cursor, opts.limit + 1]) as unknown as Promise<DreamRow[]>;
     }
     return db.unsafe(`
-      SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+      SELECT id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
       FROM dreamdis_dreams
       WHERE ${idColumn} = $1 AND created_at < $2
       ORDER BY created_at DESC
@@ -117,7 +118,7 @@ export async function findDreamsByDeviceId(opts: {
 
   if (opts.mood) {
     return db.unsafe(`
-      SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+      SELECT id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
       FROM dreamdis_dreams
       WHERE ${idColumn} = $1 AND mood = $2
       ORDER BY created_at DESC
@@ -126,7 +127,7 @@ export async function findDreamsByDeviceId(opts: {
   }
 
   return db.unsafe(`
-    SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+    SELECT id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams
     WHERE ${idColumn} = $1
     ORDER BY created_at DESC
@@ -195,7 +196,7 @@ export async function findDreamsWithTags(opts: {
 
   const query = `
     SELECT
-      d.id, d.device_id, d.content, d.audio_key, d.interpreter, d.interpretation, d.mood, d.created_at,
+      d.id, d.device_id, d.user_id, d.content, d.audio_key, d.interpreter, d.interpretation, d.mood, d.created_at,
       COALESCE(jsonb_agg(
         jsonb_build_object('id', t.id, 'tag', t.tag, 'is_custom', t.is_custom)
         ORDER BY t.id
@@ -216,6 +217,7 @@ export async function findDreamsWithTags(opts: {
   return rows.map((r: any) => ({
     id: r.id,
     device_id: r.device_id,
+    user_id: r.user_id ?? null,
     content: r.content,
     audio_key: r.audio_key,
     interpreter: r.interpreter,
@@ -246,50 +248,197 @@ export async function insertDream(data: {
 export async function findDreamById(id: number): Promise<DreamRow | null> {
   const db = await getDb();
   const rows = await db`
-    SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
+    SELECT id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at
     FROM dreamdis_dreams WHERE id = ${id}
   `;
   return (rows[0] as unknown as DreamRow) || null;
 }
 
+/**
+ * 归属判定 SQL 片段
+ *
+ * @param userParam   userId 的参数占位符序号
+ * @param deviceParam deviceId 的参数占位符序号
+ *
+ * 两个标识都为 NULL 时整个条件为 NULL（不成立），查不到任何记录。
+ */
+export function ownershipSql(userParam: number, deviceParam: number): string {
+  return `(
+    ($${userParam}::uuid IS NOT NULL AND user_id = $${userParam}::uuid)
+    OR ($${deviceParam}::text IS NOT NULL AND device_id = $${deviceParam}::text)
+  )`;
+}
+
+export interface SqlQuery {
+  text: string;
+  params: any[];
+}
+
+const DREAM_COLUMNS =
+  "id, device_id, user_id, content, audio_key, interpreter, interpretation, mood, created_at";
+
+/**
+ * 构造「按归属查询单条梦境」的 SQL —— 所有按 id 访问单条资源的入口都必须用它。
+ *
+ * 归属判定：
+ * - 传了 userId（已登录）：匹配 user_id = userId，或 device_id = 本次请求的设备 id
+ *   （后者用于覆盖「登录前以匿名设备身份创建、登录后迁移过」的记录）
+ * - 没传 userId（匿名）：仅匹配 device_id
+ *
+ * 两个标识都不匹配时查不到记录，调用方应转 404（不区分「不存在」与「无权访问」，
+ * 避免泄露 id 是否存在）。
+ */
+export function buildFindDreamByIdForUser(
+  id: number,
+  userId?: string | null,
+  deviceId?: string | null
+): SqlQuery {
+  return {
+    text: `SELECT ${DREAM_COLUMNS}
+           FROM dreamdis_dreams
+           WHERE id = $1
+             AND ${ownershipSql(2, 3)}
+           LIMIT 1`,
+    params: [id, userId || null, deviceId || null],
+  };
+}
+
+export async function findDreamByIdForUser(
+  id: number,
+  userId?: string | null,
+  deviceId?: string | null
+): Promise<DreamRow | null> {
+  const db = await getDb();
+  const q = buildFindDreamByIdForUser(id, userId, deviceId);
+  const rows = await db.unsafe(q.text, q.params);
+  return (rows[0] as unknown as DreamRow) || null;
+}
+
+/**
+ * 按「内容 + 解梦师」查找已有梦境记录（用于「换解梦师」时复用已有对话）。
+ *
+ * 归属口径与 findDreamsWithTags 保持一致：已登录按 user_id，匿名按 device_id。
+ * 否则登录用户每次换解梦师都会因查不到旧记录而重复创建。
+ */
+export function buildFindDreamByContent(opts: {
+  deviceId: string;
+  userId?: string | null;
+  content: string;
+  interpreter: string;
+}): SqlQuery {
+  const idColumn = opts.userId ? "user_id" : "device_id";
+  const idValue = opts.userId || opts.deviceId;
+  return {
+    text: `SELECT ${DREAM_COLUMNS}
+           FROM dreamdis_dreams
+           WHERE ${idColumn} = $1 AND content = $2 AND interpreter = $3
+           ORDER BY created_at DESC LIMIT 1`,
+    params: [idValue, opts.content, opts.interpreter],
+  };
+}
+
 export async function findDreamByContent(opts: {
   deviceId: string;
+  userId?: string | null;
   content: string;
   interpreter: string;
 }): Promise<DreamRow | null> {
   const db = await getDb();
-  const rows = await db`
-    SELECT id, device_id, content, audio_key, interpreter, interpretation, mood, created_at
-    FROM dreamdis_dreams
-    WHERE device_id = ${opts.deviceId} AND content = ${opts.content} AND interpreter = ${opts.interpreter}
-    ORDER BY created_at DESC LIMIT 1
-  `;
+  const q = buildFindDreamByContent(opts);
+  const rows = await db.unsafe(q.text, q.params);
   return (rows[0] as unknown as DreamRow) || null;
 }
 
-export async function updateDream(id: number, updates: Record<string, any>): Promise<DreamRow | null> {
-  const db = await getDb();
+/**
+ * 归属判定：调用方身份（userId / deviceId）到 SQL 谓词的映射。
+ * - userId 存在 → 匹配 user_id（跨设备同步的记录）
+ * - deviceId 存在 → 匹配 device_id（匿名设备 或 登录前创建的记录）
+ * 两者都不匹配 → 查不到记录，调用方转 404。
+ */
+export interface DreamOwner {
+  userId?: string | null;
+  deviceId?: string | null;
+}
+
+/**
+ * 可被 updateDream 修改的列白名单。
+ * 列名会拼进 SQL 文本，因此必须在函数内部锁定，不能依赖调用方传入的键名。
+ */
+const UPDATABLE_DREAM_COLUMNS = [
+  "interpreter",
+  "interpretation",
+  "mood",
+  "audio_key",
+] as const;
+
+/**
+ * 构造「按归属更新梦境」的 SQL。
+ * 非白名单列会被忽略（并打日志），因此列名永远来自内部常量。
+ */
+export function buildUpdateDream(
+  id: number,
+  updates: Record<string, any>,
+  owner: DreamOwner
+): SqlQuery | null {
   const setClauses: string[] = [];
   const values: any[] = [];
   let paramIdx = 1;
 
   for (const [key, value] of Object.entries(updates)) {
+    if (!UPDATABLE_DREAM_COLUMNS.includes(key as (typeof UPDATABLE_DREAM_COLUMNS)[number])) {
+      console.warn(`[db] updateDream ignored non-whitelisted column: ${key}`);
+      continue;
+    }
     setClauses.push(`${key} = $${paramIdx}`);
     values.push(value);
     paramIdx++;
   }
 
-  if (setClauses.length === 0) return findDreamById(id);
+  if (setClauses.length === 0) return null;
 
-  values.push(id);
-  const query = `UPDATE dreamdis_dreams SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING id, device_id, content, audio_key, interpreter, interpretation, mood, created_at`;
-  const rows = await db.unsafe(query, values);
+  values.push(id, owner.userId || null, owner.deviceId || null);
+  const idParam = paramIdx;
+  const userParam = paramIdx + 1;
+  const deviceParam = paramIdx + 2;
+
+  return {
+    text: `UPDATE dreamdis_dreams
+           SET ${setClauses.join(", ")}
+           WHERE id = $${idParam}
+             AND ${ownershipSql(userParam, deviceParam)}
+           RETURNING ${DREAM_COLUMNS}`,
+    params: values,
+  };
+}
+
+export async function updateDream(
+  id: number,
+  updates: Record<string, any>,
+  owner: DreamOwner
+): Promise<DreamRow | null> {
+  const db = await getDb();
+  const q = buildUpdateDream(id, updates, owner);
+  if (!q) {
+    // 没有可更新列时，仍需按归属返回记录，避免绕过归属校验
+    return findDreamByIdForUser(id, owner.userId, owner.deviceId);
+  }
+  const rows = await db.unsafe(q.text, q.params);
   return (rows[0] as unknown as DreamRow) || null;
 }
 
-export async function deleteDream(id: number): Promise<boolean> {
+export function buildDeleteDream(id: number, owner: DreamOwner): SqlQuery {
+  return {
+    text: `DELETE FROM dreamdis_dreams
+           WHERE id = $1
+             AND ${ownershipSql(2, 3)}`,
+    params: [id, owner.userId || null, owner.deviceId || null],
+  };
+}
+
+export async function deleteDream(id: number, owner: DreamOwner): Promise<boolean> {
   const db = await getDb();
-  const result = await db`DELETE FROM dreamdis_dreams WHERE id = ${id}`;
+  const q = buildDeleteDream(id, owner);
+  const result = await db.unsafe(q.text, q.params);
   return result.count > 0;
 }
 

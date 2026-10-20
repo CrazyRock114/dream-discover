@@ -1,4 +1,7 @@
 import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from "./assets/avatars.js";
+// 必须放在所有业务 import 之前：ESM 按 import 声明顺序求值，
+// 而 llm.ts / asr.ts / r2-storage.ts 在模块顶层就读取了 process.env
+import "dotenv/config";
 import crypto from "crypto";
 // Railway 不支持 IPv6 出站连接，全局覆盖 dns.lookup 强制使用 IPv4
 // 必须在所有 import 之前执行，确保所有后续模块的 DNS 解析都走 IPv4
@@ -25,6 +28,7 @@ import { FREUD_PROMPT, ZHOUGONG_PROMPT } from "./interpreters.js";
 import { runMigration } from "./migrate.js";
 import * as db from "./db.js";
 import { optionalAuth } from "./auth-middleware.js";
+import { createRateLimiter, clientIp } from "./rate-limit.js";
 
 const app = express();
 const port = process.env.PORT || 9091;
@@ -33,9 +37,24 @@ const port = process.env.PORT || 9091;
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Railway 在前面有一层代理，需信任它才能拿到真实客户端 IP
+app.set("trust proxy", 1);
 app.use(optionalAuth);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+// ─── Rate limiters ───
+// 邮件轰炸：同邮箱 60 秒冷却 + 10 分钟内 3 次
+const sendCodeCooldown = createRateLimiter(60_000, 1);
+const sendCodePerEmail = createRateLimiter(10 * 60_000, 3);
+// 防止用不同邮箱批量轰炸：同 IP 10 分钟内 20 次
+const sendCodePerIp = createRateLimiter(10 * 60_000, 20);
+// 验证码爆破：同邮箱连续失败 5 次锁定 15 分钟
+const verifyCodeFailures = createRateLimiter(15 * 60_000, 5);
+// LLM 成本保护：同设备每小时 40 次解读/追问
+const llmCalls = createRateLimiter(60 * 60_000, 40);
+// ASR 成本保护：同设备每小时 60 次转写
+const asrCalls = createRateLimiter(60 * 60_000, 60);
 
 // ─── Device ID middleware ───
 function getDeviceId(req: express.Request): string {
@@ -170,6 +189,7 @@ app.get("/api/v1/dreams/find", async (req, res) => {
 
     const data = await db.findDreamByContent({
       deviceId,
+      userId: req.userId,
       content: content.trim(),
       interpreter,
     });
@@ -191,7 +211,11 @@ app.get("/api/v1/dreams/find", async (req, res) => {
  */
 app.get("/api/v1/dreams/:id", async (req, res) => {
   try {
-    const data = await db.findDreamById(Number(req.params.id));
+    const data = await db.findDreamByIdForUser(
+      Number(req.params.id),
+      req.userId,
+      getDeviceId(req)
+    );
     if (!data) {
       res.status(404).json({ error: "梦境不存在" });
       return;
@@ -216,19 +240,21 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
     if (req.body.interpretation !== undefined) updates.interpretation = req.body.interpretation;
     if (req.body.mood !== undefined) updates.mood = req.body.mood;
 
-    let data = await db.findDreamById(Number(req.params.id));
+    const owner = { userId: req.userId, deviceId: getDeviceId(req) };
+    const dreamId = Number(req.params.id);
+
+    let data = await db.findDreamByIdForUser(dreamId, owner.userId, owner.deviceId);
     if (!data) {
       res.status(404).json({ error: "梦境不存在" });
       return;
     }
 
     if (Object.keys(updates).length > 0) {
-      data = await db.updateDream(Number(req.params.id), updates);
+      data = await db.updateDream(dreamId, updates, owner);
     }
 
     // Update tags if provided
     if (req.body.tags !== undefined) {
-      const dreamId = Number(req.params.id);
       await db.deleteTagsByDreamId(dreamId);
 
       if (Array.isArray(req.body.tags) && req.body.tags.length > 0) {
@@ -256,7 +282,14 @@ app.patch("/api/v1/dreams/:id", async (req, res) => {
  */
 app.delete("/api/v1/dreams/:id", async (req, res) => {
   try {
-    await db.deleteDream(Number(req.params.id));
+    const deleted = await db.deleteDream(Number(req.params.id), {
+      userId: req.userId,
+      deviceId: getDeviceId(req),
+    });
+    if (!deleted) {
+      res.status(404).json({ error: "梦境不存在" });
+      return;
+    }
     res.json({ success: true });
   } catch (err: any) {
     console.error("DELETE /dreams/:id error:", err);
@@ -271,7 +304,18 @@ app.delete("/api/v1/dreams/:id", async (req, res) => {
  */
 app.get("/api/v1/dreams/:id/messages", async (req, res) => {
   try {
-    const data = await db.findMessagesByDreamId(Number(req.params.id));
+    // 先校验梦境归属，避免直接按 id 拉取他人对话
+    const dream = await db.findDreamByIdForUser(
+      Number(req.params.id),
+      req.userId,
+      getDeviceId(req)
+    );
+    if (!dream) {
+      res.status(404).json({ error: "梦境不存在" });
+      return;
+    }
+
+    const data = await db.findMessagesByDreamId(dream.id);
     res.json(data);
   } catch (err: any) {
     console.error("GET /dreams/:id/messages error:", err);
@@ -335,30 +379,45 @@ app.post("/api/v1/asr", async (req, res) => {
  * FormData: file = audio blob
  * 直接转录音频，无需 R2 存储（推荐用于外部部署）
  */
-app.post("/api/v1/asr/transcribe", upload.single("file"), async (req, res) => {
-  const startTime = Date.now();
-  try {
-    if (!req.file) {
-      res.status(400).json({ error: "请上传音频文件" });
+app.post(
+  "/api/v1/asr/transcribe",
+  // 限流放在 multer 之前，避免被限流的请求仍然上传整个音频文件
+  (req, res, next) => {
+    const key = `asr:${getDeviceId(req) || clientIp(req)}`;
+    const limit = asrCalls.peek(key);
+    if (!limit.allowed) {
+      res.status(429).json({ error: `语音识别请求过于频繁，请 ${limit.retryAfterSeconds} 秒后再试` });
       return;
     }
+    asrCalls.hit(key);
+    next();
+  },
+  upload.single("file"),
+  async (req, res) => {
+    const startTime = Date.now();
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "请上传音频文件" });
+        return;
+      }
 
-    const audioBuffer = req.file.buffer;
-    const fileName = req.file.originalname || "audio.m4a";
-    const mimeType = req.file.mimetype || "audio/m4a";
-    console.log(`[asr/transcribe] Received file: ${fileName}, size: ${audioBuffer.length} bytes`);
+      const audioBuffer = req.file.buffer;
+      const fileName = req.file.originalname || "audio.m4a";
+      const mimeType = req.file.mimetype || "audio/m4a";
+      console.log(`[asr/transcribe] Received file: ${fileName}, size: ${audioBuffer.length} bytes`);
 
-    const result = await transcribeBuffer(audioBuffer, fileName, mimeType);
+      const result = await transcribeBuffer(audioBuffer, fileName, mimeType);
 
-    const elapsed = Date.now() - startTime;
-    console.log(`[asr/transcribe] Success in ${elapsed}ms, text length: ${result.text.length}`);
-    res.json({ text: result.text });
-  } catch (err: any) {
-    const elapsed = Date.now() - startTime;
-    console.error(`[asr/transcribe] Error after ${elapsed}ms:`, err.message);
-    res.status(500).json({ error: err.message });
+      const elapsed = Date.now() - startTime;
+      console.log(`[asr/transcribe] Success in ${elapsed}ms, text length: ${result.text.length}`);
+      res.json({ text: result.text });
+    } catch (err: any) {
+      const elapsed = Date.now() - startTime;
+      console.error(`[asr/transcribe] Error after ${elapsed}ms:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
 // ─── Dream Interpretation (SSE) ───
 
@@ -376,14 +435,25 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
     }
     const isConcise = mode === "concise";
 
-    const dream = await db.findDreamById(Number(req.params.id));
+    const owner = { userId: req.userId, deviceId: getDeviceId(req) };
+
+    // LLM 按次计费，按设备限制调用频率
+    const llmKey = `llm:${owner.deviceId || owner.userId || clientIp(req)}`;
+    const llmLimit = llmCalls.peek(llmKey);
+    if (!llmLimit.allowed) {
+      res.status(429).json({ error: `解读请求过于频繁，请 ${llmLimit.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+    llmCalls.hit(llmKey);
+
+    const dream = await db.findDreamByIdForUser(Number(req.params.id), owner.userId, owner.deviceId);
     if (!dream) {
       res.status(404).json({ error: "梦境不存在" });
       return;
     }
 
     // Update dream with interpreter
-    await db.updateDream(dream.id, { interpreter });
+    await db.updateDream(dream.id, { interpreter }, owner);
 
     const systemPrompt = interpreter === "freud" ? FREUD_PROMPT : ZHOUGONG_PROMPT;
     const conciseSuffix = isConcise
@@ -428,7 +498,7 @@ app.post("/api/v1/dreams/:id/interpret", async (req, res) => {
 
     // Save assistant message and update dream interpretation
     await db.insertMessage({ dream_id: dream.id, role: "assistant", content: fullContent });
-    await db.updateDream(dream.id, { interpretation: fullContent, interpreter });
+    await db.updateDream(dream.id, { interpretation: fullContent, interpreter }, owner);
 
     res.end();
   } catch (err: any) {
@@ -462,7 +532,18 @@ app.post("/api/v1/dreams/:id/chat", async (req, res) => {
     }
     const isConcise = mode === "concise";
 
-    const dream = await db.findDreamById(Number(req.params.id));
+    const owner = { userId: req.userId, deviceId: getDeviceId(req) };
+
+    // LLM 按次计费，按设备限制调用频率
+    const llmKey = `llm:${owner.deviceId || owner.userId || clientIp(req)}`;
+    const llmLimit = llmCalls.peek(llmKey);
+    if (!llmLimit.allowed) {
+      res.status(429).json({ error: `解读请求过于频繁，请 ${llmLimit.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+    llmCalls.hit(llmKey);
+
+    const dream = await db.findDreamByIdForUser(Number(req.params.id), owner.userId, owner.deviceId);
     if (!dream) {
       res.status(404).json({ error: "梦境不存在" });
       return;
@@ -576,6 +657,29 @@ app.post("/api/v1/auth/send-code", async (req, res) => {
       return;
     }
 
+    const emailKey = `send:${email.toLowerCase()}`;
+    const ipKey = `send-ip:${clientIp(req)}`;
+
+    // 先检查再计数，避免被拒绝的请求也占用配额
+    const cooldown = sendCodeCooldown.peek(emailKey);
+    if (!cooldown.allowed) {
+      res.status(429).json({ error: `操作过于频繁，请 ${cooldown.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+    const perEmail = sendCodePerEmail.peek(emailKey);
+    if (!perEmail.allowed) {
+      res.status(429).json({ error: `该邮箱请求过于频繁，请 ${perEmail.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+    const perIp = sendCodePerIp.peek(ipKey);
+    if (!perIp.allowed) {
+      res.status(429).json({ error: `请求过于频繁，请 ${perIp.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+    sendCodeCooldown.hit(emailKey);
+    sendCodePerEmail.hit(emailKey);
+    sendCodePerIp.hit(ipKey);
+
     // Generate 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -605,12 +709,22 @@ app.post("/api/v1/auth/verify-code", async (req, res) => {
       return;
     }
 
+    const verifyKey = `verify:${email.toLowerCase()}`;
+    const locked = verifyCodeFailures.peek(verifyKey);
+    if (!locked.allowed) {
+      res.status(429).json({ error: `尝试次数过多，请 ${locked.retryAfterSeconds} 秒后再试` });
+      return;
+    }
+
     // Verify code
     const authCode = await db.findValidAuthCode(email, code);
     if (!authCode) {
+      // 失败计数：连续失败达到上限后锁定
+      verifyCodeFailures.hit(verifyKey);
       res.status(400).json({ error: "验证码错误或已过期" });
       return;
     }
+    verifyCodeFailures.reset(verifyKey);
 
     // Delete used code
     await db.deleteAuthCode(authCode.id);
@@ -652,17 +766,19 @@ app.post("/api/v1/auth/verify-code", async (req, res) => {
 /**
  * POST /api/v1/migrate-device-data
  * 将匿名设备数据迁移到登录用户
- * Body: { device_id: string }
+ *
+ * 设备标识以 x-device-id 请求头为准（body 里的 device_id 不可信）：
+ * 若允许由 body 指定，任意登录用户都能把他人设备的匿名记录据为己有。
  */
 app.post("/api/v1/migrate-device-data", async (req, res) => {
   try {
-    const { device_id } = req.body;
     if (!req.userId) {
       res.status(401).json({ error: "请先登录" });
       return;
     }
-    if (!device_id) {
-      res.status(400).json({ error: "缺少 device_id" });
+    const deviceId = getDeviceId(req);
+    if (!deviceId) {
+      res.status(400).json({ error: "缺少设备标识" });
       return;
     }
 
@@ -670,7 +786,7 @@ app.post("/api/v1/migrate-device-data", async (req, res) => {
     const result = await dbConn`
       UPDATE dreamdis_dreams
       SET user_id = ${req.userId}
-      WHERE device_id = ${device_id} AND user_id IS NULL
+      WHERE device_id = ${deviceId} AND user_id IS NULL
     `;
 
     res.json({ migrated: result.count });
