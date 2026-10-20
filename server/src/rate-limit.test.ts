@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { createRateLimiter } from "./rate-limit.js";
+import { createRateLimiter, clientIp } from "./rate-limit.js";
 
 describe("createRateLimiter", () => {
   test("未超限时放行", () => {
@@ -60,5 +60,30 @@ describe("createRateLimiter", () => {
     assert.equal(limiter.peek("k", t0 + 950).allowed, false);
     // 第一次命中滑出窗口，只剩一次
     assert.equal(limiter.peek("k", t0 + 1100).allowed, true);
+  });
+});
+
+describe("clientIp", () => {
+  test("优先用 Express 算好的 req.ip", () => {
+    assert.equal(
+      clientIp({ ip: "1.2.3.4", headers: { "x-forwarded-for": "9.9.9.9, 1.2.3.4" } }),
+      "1.2.3.4"
+    );
+  });
+
+  test("兜底解析 x-forwarded-for 时取最右一项", () => {
+    // 最左是客户端可以自己塞的，取最左等于让攻击者自选 IP 绕过限流
+    assert.equal(
+      clientIp({ headers: { "x-forwarded-for": "6.6.6.6, 5.5.5.5" } }),
+      "5.5.5.5"
+    );
+  });
+
+  test("单条 x-forwarded-for 原样返回", () => {
+    assert.equal(clientIp({ headers: { "x-forwarded-for": "7.7.7.7" } }), "7.7.7.7");
+  });
+
+  test("没有任何线索时返回 unknown", () => {
+    assert.equal(clientIp({ headers: {} }), "unknown");
   });
 });

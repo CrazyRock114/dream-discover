@@ -73,11 +73,22 @@ export function createRateLimiter(windowMs: number, max: number): RateLimiter {
   };
 }
 
-/** 取用于限流的客户端 IP（Railway 会注入 x-forwarded-for） */
+/**
+ * 取用于限流的客户端 IP。
+ *
+ * 优先用 req.ip：Express 在 trust proxy=1 下已经按代理语义算好了
+ * （取 x-forwarded-for 最右一项 —— 那是最靠近服务器的可信代理写入的，伪造不了）。
+ *
+ * 兜底时才自己解析 x-forwarded-for，同样取**最右**一项。
+ * 不能取最左：客户端可以自己塞一个 x-forwarded-for，Railway 会在其后追加真实 IP，
+ * 取最左等于让攻击者自选 IP，直接绕过按 IP 的限流。
+ */
 export function clientIp(req: { ip?: string; headers: Record<string, unknown> }): string {
+  if (req.ip) return req.ip;
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.length > 0) {
-    return forwarded.split(",")[0].trim();
+    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
   }
-  return req.ip || "unknown";
+  return "unknown";
 }
