@@ -1,4 +1,7 @@
 import { FREUD_AVATAR_BASE64, ZHOUGONG_AVATAR_BASE64 } from "./assets/avatars.js";
+// 必须放在所有业务 import 之前：ESM 按 import 声明顺序求值，
+// 而 llm.ts / asr.ts / r2-storage.ts 在模块顶层就读取了 process.env
+import "dotenv/config";
 import crypto from "crypto";
 // Railway 不支持 IPv6 出站连接，全局覆盖 dns.lookup 强制使用 IPv4
 // 必须在所有 import 之前执行，确保所有后续模块的 DNS 解析都走 IPv4

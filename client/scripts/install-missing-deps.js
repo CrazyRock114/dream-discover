@@ -3,11 +3,19 @@
 /**
  * 自动检测并安装缺失的依赖
  * 使用方法: node scripts/install-missing-deps.js
+ *
+ * CI 里必须跳过：自动装包会改动 lockfile，
+ * 与 --frozen-lockfile 冲突，也会让构建结果不可复现。
  */
 
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+
+if (process.env.CI) {
+  console.log('CI 环境：跳过自动安装缺失依赖（保持 lockfile 可复现）');
+  process.exit(0);
+}
 
 console.log('检测缺失的依赖...\n');
 
